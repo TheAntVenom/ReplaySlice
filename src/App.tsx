@@ -22,7 +22,6 @@ const INITIAL_SETTINGS: GlobalPluginSettings = {
   mainCapturesDir: '',
   outputDir: '',
   deleteOriginal: true,
-  dynamicStepLength: '00:30',
   ffmpegPath: '',
   successSoundPath: '',
   errorSoundPath: '',

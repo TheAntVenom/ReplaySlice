@@ -42,14 +42,20 @@ const ACTION_CATALOG: Array<{
   {
     type: StreamDeckActionType.DYNAMIC_INCREASE,
     name: 'Dynamic Increase',
-    defaultTitle: '+ Step',
-    summary: 'Adds Dynamic Step Length to the Dynamic Length button.',
+    defaultTitle: '+ 0:30',
+    summary: 'Adds a button-specific step duration (default 00:30) to Dynamic Length.',
   },
   {
     type: StreamDeckActionType.DYNAMIC_DECREASE,
     name: 'Dynamic Decrease',
-    defaultTitle: '- Step',
-    summary: 'Subtracts Dynamic Step Length from the Dynamic Length button.',
+    defaultTitle: '- 0:30',
+    summary: 'Subtracts a button-specific step duration (default 00:30) from Dynamic Length.',
+  },
+  {
+    type: StreamDeckActionType.RESET_DYNAMIC_LENGTH,
+    name: 'Reset Dynamic Length',
+    defaultTitle: 'Reset 0:30',
+    summary: 'Sets Dynamic Length directly to a button-specific target duration (default 00:30).',
   },
   {
     type: StreamDeckActionType.OPEN_OUTPUT_DIRECTORY,
@@ -74,6 +80,9 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     titleAlignment: 'middle',
     titleColor: '#F8FAFC',
     fixedDurationInput: '00:30',
+    stepDurationInput: '00:30',
+    minFloorInput: '',
+    resetDurationInput: '00:30',
     openAfterSave: false,
   }));
 
@@ -85,6 +94,9 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     titleAlignment: 'middle',
     titleColor: '#F8FAFC',
     fixedDurationInput: '00:30',
+    stepDurationInput: '00:30',
+    minFloorInput: '',
+    resetDurationInput: '00:30',
     openAfterSave: false,
   };
   slots[1] = {
@@ -95,6 +107,9 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     titleAlignment: 'middle',
     titleColor: '#F8FAFC',
     fixedDurationInput: '00:30',
+    stepDurationInput: '00:30',
+    minFloorInput: '',
+    resetDurationInput: '00:30',
     openAfterSave: true,
   };
   slots[2] = {
@@ -105,46 +120,74 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     titleAlignment: 'middle',
     titleColor: '#FFFFFF',
     fixedDurationInput: '01:00',
+    stepDurationInput: '00:30',
+    minFloorInput: '',
+    resetDurationInput: '00:30',
     openAfterSave: false,
   };
   slots[3] = {
     slotIndex: 3,
     actionType: StreamDeckActionType.DYNAMIC_INCREASE,
-    userTitle: 'Dyn +',
+    userTitle: 'Dyn +30s',
     titleFontSize: 13,
     titleAlignment: 'middle',
     titleColor: '#E2E8F0',
     fixedDurationInput: '00:30',
+    stepDurationInput: '00:30',
+    minFloorInput: '',
+    resetDurationInput: '00:30',
     openAfterSave: false,
   };
   slots[4] = {
     slotIndex: 4,
     actionType: StreamDeckActionType.DYNAMIC_DECREASE,
-    userTitle: 'Dyn -',
+    userTitle: 'Dyn -30s',
     titleFontSize: 13,
     titleAlignment: 'middle',
     titleColor: '#E2E8F0',
     fixedDurationInput: '00:30',
+    stepDurationInput: '00:30',
+    minFloorInput: '',
+    resetDurationInput: '00:30',
     openAfterSave: false,
   };
   slots[5] = {
     slotIndex: 5,
+    actionType: StreamDeckActionType.RESET_DYNAMIC_LENGTH,
+    userTitle: 'Reset 0:30',
+    titleFontSize: 12,
+    titleAlignment: 'middle',
+    titleColor: '#E2E8F0',
+    fixedDurationInput: '00:30',
+    stepDurationInput: '00:30',
+    minFloorInput: '',
+    resetDurationInput: '00:30',
+    openAfterSave: false,
+  };
+  slots[6] = {
+    slotIndex: 6,
     actionType: StreamDeckActionType.OPEN_OUTPUT_DIRECTORY,
     userTitle: 'Open Output',
     titleFontSize: 12,
     titleAlignment: 'middle',
     titleColor: '#CBD5E1',
     fixedDurationInput: '00:30',
+    stepDurationInput: '00:30',
+    minFloorInput: '',
+    resetDurationInput: '00:30',
     openAfterSave: false,
   };
-  slots[6] = {
-    slotIndex: 6,
+  slots[7] = {
+    slotIndex: 7,
     actionType: StreamDeckActionType.OPEN_CAPTURES_DIRECTORY,
     userTitle: 'Open Captures',
     titleFontSize: 12,
     titleAlignment: 'middle',
     titleColor: '#CBD5E1',
     fixedDurationInput: '00:30',
+    stepDurationInput: '00:30',
+    minFloorInput: '',
+    resetDurationInput: '00:30',
     openAfterSave: false,
   };
 
@@ -187,7 +230,6 @@ export function StreamDeckEmulator({
   }, [debounceRemainingMs]);
 
   const selectedSlot = slots[selectedSlotIdx];
-  const stepSeconds = Math.max(1, parseTimecodeToSeconds(settings.dynamicStepLength, 30));
   const actualElapsedSeconds = Math.max(1, parseTimecodeToSeconds(simulatedElapsedInput, 420));
 
   // Derive the active button's capture duration and its corresponding Fail Timer
@@ -363,12 +405,13 @@ export function StreamDeckEmulator({
     if (!slot.actionType) return;
 
     if (slot.actionType === StreamDeckActionType.DYNAMIC_INCREASE) {
+      const btnStepSec = Math.max(1, parseTimecodeToSeconds(slot.stepDurationInput, 30));
       setDynamicSeconds((prev) => {
-        const next = prev + stepSeconds;
+        const next = prev + btnStepSec;
         const nextFail = calculateFailTimeoutSeconds(next);
         setStatusBanner({
           tone: 'idle',
-          message: `Dynamic Increase (+${stepSeconds}s): Dynamic Length updated to ${formatDynamicButtonTitle(next)} (Fail timer: ${nextFail}s).`,
+          message: `Dynamic Increase (+${btnStepSec}s): Dynamic Length updated to ${formatDynamicButtonTitle(next)} (Fail timer: ${nextFail}s).`,
         });
         return next;
       });
@@ -376,14 +419,30 @@ export function StreamDeckEmulator({
     }
 
     if (slot.actionType === StreamDeckActionType.DYNAMIC_DECREASE) {
+      const btnStepSec = Math.max(1, parseTimecodeToSeconds(slot.stepDurationInput, 30));
+      const autoFloor = Math.max(1, Math.min(30, btnStepSec));
+      const rawFloor = slot.minFloorInput.trim();
+      const floorSec = rawFloor ? Math.max(1, parseTimecodeToSeconds(rawFloor, autoFloor)) : autoFloor;
       setDynamicSeconds((prev) => {
-        const next = prev > stepSeconds ? prev - stepSeconds : Math.max(1, Math.min(prev, stepSeconds));
+        const clamped = Math.max(floorSec, prev - btnStepSec);
+        const next = Math.max(1, Math.min(prev, clamped));
         const nextFail = calculateFailTimeoutSeconds(next);
         setStatusBanner({
           tone: 'idle',
-          message: `Dynamic Decrease (-${stepSeconds}s): Dynamic Length updated to ${formatDynamicButtonTitle(next)} (Fail timer: ${nextFail}s).`,
+          message: `Dynamic Decrease (-${btnStepSec}s, floor ${formatDynamicButtonTitle(floorSec)}): Dynamic Length updated to ${formatDynamicButtonTitle(next)} (Fail timer: ${nextFail}s).`,
         });
         return next;
+      });
+      return;
+    }
+
+    if (slot.actionType === StreamDeckActionType.RESET_DYNAMIC_LENGTH) {
+      const targetSec = Math.max(1, parseTimecodeToSeconds(slot.resetDurationInput, 30));
+      const nextFail = calculateFailTimeoutSeconds(targetSec);
+      setDynamicSeconds(targetSec);
+      setStatusBanner({
+        tone: 'idle',
+        message: `Reset Dynamic Length: Dynamic Length set to ${formatDynamicButtonTitle(targetSec)} (${targetSec}s · Fail timer: ${nextFail}s).`,
       });
       return;
     }
@@ -762,9 +821,12 @@ export function StreamDeckEmulator({
                   )}
                 </div>
 
-                {/* Per-Button Property Inspector: Fixed Length & Dynamic Length */}
+                {/* Per-Button Property Inspector */}
                 {(selectedSlot.actionType === StreamDeckActionType.FIXED_LENGTH ||
-                  selectedSlot.actionType === StreamDeckActionType.DYNAMIC_LENGTH) && (
+                  selectedSlot.actionType === StreamDeckActionType.DYNAMIC_LENGTH ||
+                  selectedSlot.actionType === StreamDeckActionType.DYNAMIC_INCREASE ||
+                  selectedSlot.actionType === StreamDeckActionType.DYNAMIC_DECREASE ||
+                  selectedSlot.actionType === StreamDeckActionType.RESET_DYNAMIC_LENGTH) && (
                   <div className="space-y-3 pt-3 border-t border-slate-800/80">
                     <p className="text-xs font-medium text-slate-400">Button Action Settings</p>
 
@@ -788,22 +850,93 @@ export function StreamDeckEmulator({
                       </div>
                     )}
 
-                    <label className="inline-flex items-start gap-2.5 cursor-pointer select-none pt-1">
-                      <input
-                        type="checkbox"
-                        checked={selectedSlot.openAfterSave}
-                        onChange={(e) => updateSelectedSlot({ openAfterSave: e.target.checked })}
-                        className="mt-0.5 w-4 h-4 rounded border-slate-600 bg-[#131924] text-blue-600"
-                      />
-                      <div>
-                        <span className="block text-xs font-medium text-slate-200">
-                          Open clip automatically after saving
-                        </span>
-                        <span className="block text-xs text-slate-500 mt-0.5">
-                          Saved independently on this key — you can place multiple Fixed or Dynamic Length buttons with different open behavior.
-                        </span>
+                    {(selectedSlot.actionType === StreamDeckActionType.FIXED_LENGTH ||
+                      selectedSlot.actionType === StreamDeckActionType.DYNAMIC_LENGTH) && (
+                      <label className="inline-flex items-start gap-2.5 cursor-pointer select-none pt-1">
+                        <input
+                          type="checkbox"
+                          checked={selectedSlot.openAfterSave}
+                          onChange={(e) => updateSelectedSlot({ openAfterSave: e.target.checked })}
+                          className="mt-0.5 w-4 h-4 rounded border-slate-600 bg-[#131924] text-blue-600"
+                        />
+                        <div>
+                          <span className="block text-xs font-medium text-slate-200">
+                            Open clip automatically after saving
+                          </span>
+                          <span className="block text-xs text-slate-500 mt-0.5">
+                            Saved independently on this key — you can place multiple Fixed or Dynamic Length buttons with different open behavior.
+                          </span>
+                        </div>
+                      </label>
+                    )}
+
+                    {(selectedSlot.actionType === StreamDeckActionType.DYNAMIC_INCREASE ||
+                      selectedSlot.actionType === StreamDeckActionType.DYNAMIC_DECREASE) && (
+                      <div className="space-y-3">
+                        <div className="space-y-1.5">
+                          <label htmlFor="slot-step-dur" className="text-xs font-medium text-slate-300">
+                            {selectedSlot.actionType === StreamDeckActionType.DYNAMIC_INCREASE
+                              ? 'Increase Step Length (HH:MM:SS, MM:SS, or sec)'
+                              : 'Decrease Step Length (HH:MM:SS, MM:SS, or sec)'}
+                          </label>
+                          <input
+                            id="slot-step-dur"
+                            type="text"
+                            value={selectedSlot.stepDurationInput}
+                            onChange={(e) => updateSelectedSlot({ stepDurationInput: e.target.value })}
+                            placeholder="00:30"
+                            className="w-full bg-[#131924] border border-slate-700 focus:border-blue-500 rounded-lg px-3 py-2 text-sm font-mono tabular-nums text-slate-100 outline-none"
+                          />
+                          <p className="text-xs text-slate-400">
+                            {selectedSlot.actionType === StreamDeckActionType.DYNAMIC_INCREASE
+                              ? `Adds +${Math.max(1, parseTimecodeToSeconds(selectedSlot.stepDurationInput, 30))}s per press (independent to this key).`
+                              : `Subtracts -${Math.max(1, parseTimecodeToSeconds(selectedSlot.stepDurationInput, 30))}s per press (independent to this key).`}
+                          </p>
+                        </div>
+
+                        {selectedSlot.actionType === StreamDeckActionType.DYNAMIC_DECREASE && (
+                          <div className="space-y-1.5">
+                            <label htmlFor="slot-min-floor" className="text-xs font-medium text-slate-300">
+                              Minimum Dynamic Length Floor (Optional)
+                            </label>
+                            <input
+                              id="slot-min-floor"
+                              type="text"
+                              value={selectedSlot.minFloorInput}
+                              onChange={(e) => updateSelectedSlot({ minFloorInput: e.target.value })}
+                              placeholder="Auto (00:30, or step if smaller)"
+                              className="w-full bg-[#131924] border border-slate-700 focus:border-blue-500 rounded-lg px-3 py-2 text-sm font-mono tabular-nums text-slate-100 outline-none"
+                            />
+                            <p className="text-xs text-slate-500">
+                              Lets a large minus button drop Dynamic Length straight down without going below this floor.
+                            </p>
+                          </div>
+                        )}
                       </div>
-                    </label>
+                    )}
+
+                    {selectedSlot.actionType === StreamDeckActionType.RESET_DYNAMIC_LENGTH && (
+                      <div className="space-y-1.5">
+                        <label htmlFor="slot-reset-dur" className="text-xs font-medium text-slate-300">
+                          Reset Target Length (HH:MM:SS, MM:SS, or sec)
+                        </label>
+                        <input
+                          id="slot-reset-dur"
+                          type="text"
+                          value={selectedSlot.resetDurationInput}
+                          onChange={(e) => updateSelectedSlot({ resetDurationInput: e.target.value })}
+                          placeholder="00:30"
+                          className="w-full bg-[#131924] border border-slate-700 focus:border-blue-500 rounded-lg px-3 py-2 text-sm font-mono tabular-nums text-slate-100 outline-none"
+                        />
+                        <p className="text-xs text-slate-400">
+                          Sets Dynamic Length to{' '}
+                          <span className="font-mono tabular-nums text-slate-200">
+                            {formatDynamicButtonTitle(Math.max(1, parseTimecodeToSeconds(selectedSlot.resetDurationInput, 30)))}
+                          </span>{' '}
+                          when pressed. Saved independently on this button so you can place multiple preset keys.
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
               </>

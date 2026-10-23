@@ -67,11 +67,12 @@ export function InstallGuideSection({
             </h3>
             <p className="mt-2 text-xs text-slate-400 leading-relaxed">
               In the right-hand sidebar of your Stream Deck software, expand the{' '}
-              <span className="text-slate-200 font-medium">ReplaySlice</span> category to find all six actions:{' '}
+              <span className="text-slate-200 font-medium">ReplaySlice</span> category to find all seven actions:{' '}
               <span className="text-slate-300">Fixed Length</span>,{' '}
               <span className="text-slate-300">Dynamic Length</span>,{' '}
               <span className="text-slate-300">Dynamic Increase</span>,{' '}
               <span className="text-slate-300">Dynamic Decrease</span>,{' '}
+              <span className="text-slate-300">Reset Dynamic Length</span>,{' '}
               <span className="text-slate-300">Open Output Directory</span>, and{' '}
               <span className="text-slate-300">Open Captures Directory</span>.
             </p>

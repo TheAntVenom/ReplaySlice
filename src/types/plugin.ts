@@ -3,6 +3,7 @@ export enum StreamDeckActionType {
   DYNAMIC_LENGTH = 'com.antvenom.replayslice.dynamiclength',
   DYNAMIC_INCREASE = 'com.antvenom.replayslice.dynamicincrease',
   DYNAMIC_DECREASE = 'com.antvenom.replayslice.dynamicdecrease',
+  RESET_DYNAMIC_LENGTH = 'com.antvenom.replayslice.dynamicreset',
   OPEN_OUTPUT_DIRECTORY = 'com.antvenom.replayslice.openfolder',
   OPEN_CAPTURES_DIRECTORY = 'com.antvenom.replayslice.opencaptures',
 }
@@ -12,7 +13,6 @@ export interface GlobalPluginSettings {
   mainCapturesDir: string;
   outputDir: string;
   deleteOriginal: boolean;
-  dynamicStepLength: string; // HH:MM:SS, MM:SS, or seconds
   ffmpegPath: string;
   successSoundPath: string;
   errorSoundPath: string;
@@ -25,7 +25,10 @@ export interface DeckKeySlot {
   titleFontSize: number; // Native Stream Deck Title font size setting
   titleAlignment: 'top' | 'middle' | 'bottom';
   titleColor: string;
-  fixedDurationInput: string; // Only used when actionType === FIXED_LENGTH (HH:MM:SS or MM:SS)
+  fixedDurationInput: string; // Used when actionType === FIXED_LENGTH (HH:MM:SS or MM:SS)
+  stepDurationInput: string; // Per-button step for DYNAMIC_INCREASE & DYNAMIC_DECREASE (default 00:30)
+  minFloorInput: string; // Optional per-button minimum floor for DYNAMIC_DECREASE (blank = auto)
+  resetDurationInput: string; // Per-button target duration for RESET_DYNAMIC_LENGTH (default 00:30)
   openAfterSave: boolean; // Per-button setting on Fixed Length & Dynamic Length
 }
 

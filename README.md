@@ -39,12 +39,13 @@ Once installed, find **ReplaySlice** in the right-hand Actions sidebar of the El
 | :--- | :--- |
 | **Fixed Length** | Captures and trims an instant replay to a fixed duration (`HH:MM:SS` or `MM:SS`) configured on that specific button. Drop as many Fixed Length keys onto your deck as you want. |
 | **Dynamic Length** | Defaults to `1:00`. Displays a live duration directly on the key face and captures that exact length when pressed. |
-| **Dynamic Increase** | Adds your configured **Dynamic Step Length** to the **Dynamic Length** button. |
-| **Dynamic Decrease** | Subtracts your configured **Dynamic Step Length** from the **Dynamic Length** button. |
+| **Dynamic Increase** | Adds a button-specific step duration (default `00:30`) to **Dynamic Length**. Place multiple `+` buttons with different step sizes independently. |
+| **Dynamic Decrease** | Subtracts a button-specific step duration (default `00:30`) from **Dynamic Length**, with an optional minimum floor. Place multiple `-` buttons (e.g. a fine adjustment and a huge drop) independently. |
+| **Reset Dynamic Length** | Sets **Dynamic Length** directly to a button-specific target duration (default `00:30`). Place multiple reset/preset buttons to jump straight to any duration. |
 | **Open Output Directory** | Opens your trimmed clips folder in Windows Explorer or macOS Finder. |
 | **Open Captures Directory** | Opens your raw master captures folder in Windows Explorer or macOS Finder. |
 
-> **Tip — Styling the Dynamic Length Button:** All six buttons use Stream Deck's native icon, font, font size, alignment, and text color controls. On **Dynamic Length**, leave the static **Title** text box empty in Stream Deck so ReplaySlice can update the live timer (`1:00` → `3:30`) using your chosen font and size.
+> **Tip — Styling the Dynamic Length Button:** All seven buttons use Stream Deck's native icon, font, font size, alignment, and text color controls. On **Dynamic Length**, leave the static **Title** text box empty in Stream Deck so ReplaySlice can update the live timer (`1:00` → `3:30`) using your chosen font and size.
 
 ---
 
@@ -72,8 +73,9 @@ Once installed, find **ReplaySlice** in the right-hand Actions sidebar of the El
 | :--- | :--- | :--- |
 | **Fixed Replay Length** | *Fixed Length* key | Duration to keep (`HH:MM:SS`, `MM:SS`, or seconds — e.g. `00:30` or `05:00`). |
 | **Open Clip After Saving** | *Fixed* & *Dynamic Length* keys | Optional per-button checkbox that opens the newly trimmed clip in your default media player immediately after saving. Saved independently per key so you can have separate silent-save and instant-review buttons (including multiple *Dynamic Length* keys). |
+| **Step Length** | *Dynamic Increase* & *Decrease* keys | Amount added or subtracted per press (`HH:MM:SS`, `MM:SS`, or seconds — default `00:30`). Configured independently on each `+` and `-` button, with an optional **Minimum Floor** on *Dynamic Decrease*. |
+| **Reset Target Length** | *Reset Dynamic Length* key | Duration that *Dynamic Length* jumps to when pressed (default `00:30`). Configured independently per button so you can create multiple preset keys. |
 | **Master Replay Hotkey** | Global | Shortcut sent to trigger your recorder's Instant Replay save (e.g. `Alt+F10` for ShadowPlay, or your OBS Replay Buffer hotkey). Includes a one-click **Record** button. |
-| **Dynamic Step Length** | Global | Amount added or subtracted per press of *Dynamic Increase* / *Dynamic Decrease* (default `00:30`). |
 | **Main Captures Directory** | Global | Folder where OBS or ShadowPlay writes master replay files. Automatically scans subfolders (supporting ShadowPlay's per-game folders). |
 | **Output Directory** | Global | Destination folder where trimmed clips (`<OriginalName>_<Duration>.<ext>`) are saved. |
 | **Delete Original Capture** | Global | Enabled by default. Deletes the full-length master capture only after verifying the trimmed output clip exists and is non-empty on disk. |
@@ -87,7 +89,7 @@ Once installed, find **ReplaySlice** in the right-hand Actions sidebar of the El
 
 - **Aligned Audio & Video Without Re-Encoding:** Waits until OBS/ShadowPlay releases its OS write handle so trailing audio/video packets are completely flushed, inspects stream durations and preceding keyframes via `ffprobe`, and trims using `-map 0:v -map 0:a? -c copy -avoid_negative_ts make_zero -shortest` (preserving multi-track audio).
 - **Short-Buffer Safe:** If your replay buffer max is 20 minutes and only 7 minutes have elapsed, ReplaySlice reads the actual `7:00` file duration rather than assuming `20:00`. If you request a clip longer than the elapsed buffer, it cleanly saves the full available buffer from `0:00`.
-- **2-Second Capture Debounce:** Accidental double-taps on *Fixed Length* or *Dynamic Length* within 2 seconds are ignored. *Dynamic Increase* and *Dynamic Decrease* are never debounced so you can tap rapidly to dial a target time.
+- **2-Second Capture Debounce:** Accidental double-taps on *Fixed Length* or *Dynamic Length* within 2 seconds are ignored. *Dynamic Increase*, *Dynamic Decrease*, and *Reset Dynamic Length* are never debounced so you can adjust durations rapidly.
 - **Scaled Fail Timer:** Starts at a **10-second** minimum and automatically adds **2 seconds for every 5 minutes** of requested capture length (e.g., `10:30` → `14s`, `01:00:00` → `34s`) so large master buffers have enough time to flush to disk.
 
 ---

@@ -1,7 +1,7 @@
 import { GeneratedPluginFile, GlobalPluginSettings } from '../types/plugin';
 
 export const PLUGIN_UUID = 'com.antvenom.replayslice';
-export const PLUGIN_VERSION = '1.0.1';
+export const PLUGIN_VERSION = '1.0.2';
 export const SD_PLUGIN_FOLDER = `${PLUGIN_UUID}.sdPlugin`;
 
 export function generateManifestJson(): string {
@@ -67,7 +67,7 @@ export function generateManifestJson(): string {
       {
         UUID: `${PLUGIN_UUID}.dynamicincrease`,
         Name: 'Dynamic Increase',
-        Tooltip: 'Increase the Dynamic Length button duration by Dynamic Step Length',
+        Tooltip: 'Increase Dynamic Length by a step duration configured on this button',
         Icon: 'imgs/action-plus',
         Controllers: ['Keypad'],
         States: [
@@ -80,8 +80,21 @@ export function generateManifestJson(): string {
       {
         UUID: `${PLUGIN_UUID}.dynamicdecrease`,
         Name: 'Dynamic Decrease',
-        Tooltip: 'Decrease the Dynamic Length button duration by Dynamic Step Length',
+        Tooltip: 'Decrease Dynamic Length by a step duration configured on this button',
         Icon: 'imgs/action-minus',
+        Controllers: ['Keypad'],
+        States: [
+          {
+            Image: 'imgs/key-default',
+            TitleAlignment: 'middle',
+          },
+        ],
+      },
+      {
+        UUID: `${PLUGIN_UUID}.dynamicreset`,
+        Name: 'Reset Dynamic Length',
+        Tooltip: 'Set or reset Dynamic Length to a specific duration configured on this button (default 0:30)',
+        Icon: 'imgs/action-reset',
         Controllers: ['Keypad'],
         States: [
           {
@@ -129,7 +142,6 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
       mainCapturesDir: defaults.mainCapturesDir || '',
       outputDir: defaults.outputDir || '',
       deleteOriginal: defaults.deleteOriginal ?? true,
-      dynamicStepLength: defaults.dynamicStepLength || '00:30',
       ffmpegPath: defaults.ffmpegPath || '',
       successSoundPath: defaults.successSoundPath || '',
       errorSoundPath: defaults.errorSoundPath || '',
@@ -167,6 +179,7 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     'const ACTION_DYNAMIC = "com.antvenom.replayslice.dynamiclength";',
     'const ACTION_INCREASE = "com.antvenom.replayslice.dynamicincrease";',
     'const ACTION_DECREASE = "com.antvenom.replayslice.dynamicdecrease";',
+    'const ACTION_RESET = "com.antvenom.replayslice.dynamicreset";',
     'const ACTION_OPEN_OUTPUT = "com.antvenom.replayslice.openfolder";',
     'const ACTION_OPEN_CAPTURES = "com.antvenom.replayslice.opencaptures";',
     '',
@@ -1229,18 +1242,35 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '      writeLog("INFO", "Dynamic Length button pressed", { context, dynSec, openAfterSave });',
     '      executeCaptureFlow(context, dynSec, openAfterSave);',
     '    } else if (action === ACTION_INCREASE) {',
-    '      const step = Math.max(1, parseTimecodeToSeconds(globalSettings.dynamicStepLength || "00:30", 30));',
+    '      const cached = (visibleContexts.get(context) || {}).settings || {};',
+    '      const incoming = (payload && payload.settings) || {};',
+    '      const btnSettings = { ...cached, ...incoming };',
+    '      const step = Math.max(1, parseTimecodeToSeconds(btnSettings.stepDuration || "00:30", 30));',
     '      globalSettings.dynamicCurrentSeconds = Math.max(1, (Number(globalSettings.dynamicCurrentSeconds) || 60) + step);',
+    '      writeLog("INFO", "Dynamic Increase button pressed", { context, step, next: globalSettings.dynamicCurrentSeconds });',
     '      saveGlobalSettings();',
     '      refreshAllDynamicButtons();',
     '    } else if (action === ACTION_DECREASE) {',
-    '      const step = Math.max(1, parseTimecodeToSeconds(globalSettings.dynamicStepLength || "00:30", 30));',
+    '      const cached = (visibleContexts.get(context) || {}).settings || {};',
+    '      const incoming = (payload && payload.settings) || {};',
+    '      const btnSettings = { ...cached, ...incoming };',
+    '      const step = Math.max(1, parseTimecodeToSeconds(btnSettings.stepDuration || "00:30", 30));',
+    '      const autoFloor = Math.max(1, Math.min(30, step));',
+    '      const rawFloor = (btnSettings.minFloor || "").trim();',
+    '      const floorSec = rawFloor ? Math.max(1, parseTimecodeToSeconds(rawFloor, autoFloor)) : autoFloor;',
     '      const current = Number(globalSettings.dynamicCurrentSeconds) || 60;',
-    '      if (current > step) {',
-    '        globalSettings.dynamicCurrentSeconds = current - step;',
-    '      } else {',
-    '        globalSettings.dynamicCurrentSeconds = Math.max(1, Math.min(current, step));',
-    '      }',
+    '      const clamped = Math.max(floorSec, current - step);',
+    '      globalSettings.dynamicCurrentSeconds = Math.max(1, Math.min(current, clamped));',
+    '      writeLog("INFO", "Dynamic Decrease button pressed", { context, step, floorSec, next: globalSettings.dynamicCurrentSeconds });',
+    '      saveGlobalSettings();',
+    '      refreshAllDynamicButtons();',
+    '    } else if (action === ACTION_RESET) {',
+    '      const cached = (visibleContexts.get(context) || {}).settings || {};',
+    '      const incoming = (payload && payload.settings) || {};',
+    '      const btnSettings = { ...cached, ...incoming };',
+    '      const targetSec = Math.max(1, parseTimecodeToSeconds(btnSettings.resetDuration || "00:30", 30));',
+    '      globalSettings.dynamicCurrentSeconds = targetSec;',
+    '      writeLog("INFO", "Reset Dynamic Length button pressed", { context, targetSec });',
     '      saveGlobalSettings();',
     '      refreshAllDynamicButtons();',
     '    } else if (action === ACTION_OPEN_OUTPUT) {',
@@ -1262,7 +1292,6 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
     mainCapturesDir: defaults.mainCapturesDir || '',
     outputDir: defaults.outputDir || '',
     deleteOriginal: defaults.deleteOriginal ?? true,
-    dynamicStepLength: defaults.dynamicStepLength || '00:30',
     ffmpegPath: defaults.ffmpegPath || '',
     successSoundPath: defaults.successSoundPath || '',
     errorSoundPath: defaults.errorSoundPath || '',
@@ -1351,8 +1380,8 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
   </style>
 </head>
 <body>
-  <!-- Per-Button Settings: Fixed Length & Dynamic Length -->
-  <div id="captureButtonSection" class="hidden">
+  <!-- Per-Button Settings -->
+  <div id="actionSettingsSection" class="hidden">
     <div class="section-heading">Button Action Settings</div>
 
     <div id="fixedOnlyRow" class="row hidden">
@@ -1371,12 +1400,32 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       </div>
     </div>
 
-    <label class="checkbox-row">
-      <input id="openAfterSave" type="checkbox" />
-      <span>Open clip automatically after saving</span>
-    </label>
-    <div class="hint" style="margin-top: -6px; margin-bottom: 10px;">
-      Applies only to this button — you can place separate buttons that do or don't open the saved clip.
+    <div id="openAfterSaveWrap" class="hidden">
+      <label class="checkbox-row">
+        <input id="openAfterSave" type="checkbox" />
+        <span>Open clip automatically after saving</span>
+      </label>
+      <div class="hint" style="margin-top: -6px; margin-bottom: 10px;">
+        Applies only to this button — you can place separate buttons that do or don't open the saved clip.
+      </div>
+    </div>
+
+    <div id="stepOnlyRow" class="row hidden">
+      <label id="stepDurationLabel" for="stepDuration">Step Length (HH:MM:SS, MM:SS, or sec)</label>
+      <input id="stepDuration" type="text" placeholder="00:30" value="00:30" />
+      <div id="stepDurationHint" class="hint">Changes Dynamic Length by 30s per press (independent to this button)</div>
+    </div>
+
+    <div id="minFloorRow" class="row hidden">
+      <label for="minFloor">Minimum Dynamic Length Floor (Optional)</label>
+      <input id="minFloor" type="text" placeholder="Auto (00:30, or step if smaller)" value="" />
+      <div class="hint">Prevents large minus buttons from dropping Dynamic Length below this value</div>
+    </div>
+
+    <div id="resetOnlyRow" class="row hidden">
+      <label for="resetDuration">Reset Target Length (HH:MM:SS, MM:SS, or sec)</label>
+      <input id="resetDuration" type="text" placeholder="00:30" value="00:30" />
+      <div id="resetDurationHint" class="hint">Sets Dynamic Length to 30s (0:30) when pressed · Independent to this button</div>
     </div>
   </div>
 
@@ -1390,12 +1439,6 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       <button id="recordHotkeyBtn" type="button">Record</button>
     </div>
     <div class="hint">Shortcut sent to save the master instant replay buffer</div>
-  </div>
-
-  <div class="row">
-    <label for="dynamicStepLength">Dynamic Step Length (HH:MM:SS, MM:SS, or sec)</label>
-    <input id="dynamicStepLength" type="text" placeholder="00:30" />
-    <div class="hint">Amount added or subtracted by Dynamic Increase / Decrease</div>
   </div>
 
   <div class="row">
@@ -1463,7 +1506,13 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
     let piUUID = "";
     let actionInfo = null;
     let globalState = Object.assign({}, DEFAULTS);
-    let actionState = { fixedDuration: "00:30", openAfterSave: false };
+    let actionState = {
+      fixedDuration: "00:30",
+      stepDuration: "00:30",
+      minFloor: "",
+      resetDuration: "00:30",
+      openAfterSave: false
+    };
     let recordingHotkey = false;
 
     function parseTimecode(raw, fallback) {
@@ -1479,6 +1528,16 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       return Number.isFinite(n) && n >= 0 ? n : fallback;
     }
 
+    function formatDisplayDuration(sec) {
+      const safe = Math.max(0, Math.round(sec));
+      const h = Math.floor(safe / 3600);
+      const m = Math.floor((safe % 3600) / 60);
+      const s = safe % 60;
+      const ss = String(s).padStart(2, "0");
+      if (h > 0) return h + ":" + String(m).padStart(2, "0") + ":" + ss;
+      return m + ":" + ss;
+    }
+
     function computeFailSeconds(captureSec) {
       return Math.max(10, 10 + Math.floor(Math.max(0, captureSec) / 300) * 2);
     }
@@ -1487,21 +1546,42 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       const fixedSec = Math.max(1, parseTimecode(document.getElementById("fixedDuration").value, 30));
       const fixedFail = computeFailSeconds(fixedSec);
       document.getElementById("fixedDurationHint").textContent =
-        "Saves the last " + fixedSec + "s · Fail timer: " + fixedFail + "s (10s + 2s per 5m)";
+        "Saves the last " + fixedSec + "s (" + formatDisplayDuration(fixedSec) + ") · Fail timer: " + fixedFail + "s (10s + 2s per 5m)";
 
       const dynSec = Math.max(1, Number(globalState.dynamicCurrentSeconds) || 60);
       const dynFail = computeFailSeconds(dynSec);
       const dynHint = document.getElementById("dynamicDurationHint");
       if (dynHint) {
         dynHint.textContent =
-          "Current Dynamic Length: " + dynSec + "s · Fail timer: " + dynFail + "s (10s + 2s per 5m)";
+          "Current Dynamic Length: " + dynSec + "s (" + formatDisplayDuration(dynSec) + ") · Fail timer: " + dynFail + "s (10s + 2s per 5m)";
+      }
+
+      const stepSec = Math.max(1, parseTimecode(document.getElementById("stepDuration").value, 30));
+      const stepHint = document.getElementById("stepDurationHint");
+      if (stepHint && actionInfo) {
+        if (actionInfo.action === "${PLUGIN_UUID}.dynamicdecrease") {
+          const autoFloor = Math.max(1, Math.min(30, stepSec));
+          const rawFloor = document.getElementById("minFloor").value.trim();
+          const effFloor = rawFloor ? Math.max(1, parseTimecode(rawFloor, autoFloor)) : autoFloor;
+          stepHint.textContent =
+            "Subtracts " + stepSec + "s (" + formatDisplayDuration(stepSec) + ") per press · Bottoms out at " + formatDisplayDuration(effFloor);
+        } else {
+          stepHint.textContent =
+            "Adds +" + stepSec + "s (" + formatDisplayDuration(stepSec) + ") per press · Saved independently on this button";
+        }
+      }
+
+      const resetSec = Math.max(1, parseTimecode(document.getElementById("resetDuration").value, 30));
+      const resetHint = document.getElementById("resetDurationHint");
+      if (resetHint) {
+        resetHint.textContent =
+          "Sets Dynamic Length to " + resetSec + "s (" + formatDisplayDuration(resetSec) + ") when pressed · Independent to this button";
       }
     }
 
     function renderGlobalFields() {
       const fields = [
         "masterHotkey",
-        "dynamicStepLength",
         "mainCapturesDir",
         "outputDir",
         "ffmpegPath",
@@ -1520,7 +1600,6 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
     function persistGlobal() {
       globalState = Object.assign({}, globalState, {
         masterHotkey: document.getElementById("masterHotkey").value.trim(),
-        dynamicStepLength: document.getElementById("dynamicStepLength").value.trim(),
         mainCapturesDir: document.getElementById("mainCapturesDir").value.trim(),
         outputDir: document.getElementById("outputDir").value.trim(),
         deleteOriginal: document.getElementById("deleteOriginal").checked,
@@ -1542,6 +1621,9 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
     function persistAction() {
       actionState = Object.assign({}, actionState, {
         fixedDuration: document.getElementById("fixedDuration").value.trim() || "00:30",
+        stepDuration: document.getElementById("stepDuration").value.trim() || "00:30",
+        minFloor: document.getElementById("minFloor").value.trim(),
+        resetDuration: document.getElementById("resetDuration").value.trim() || "00:30",
         openAfterSave: document.getElementById("openAfterSave").checked
       });
       updateHints();
@@ -1577,22 +1659,46 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
 
       const isFixed = actionInfo.action === "${PLUGIN_UUID}.fixedlength";
       const isDynamic = actionInfo.action === "${PLUGIN_UUID}.dynamiclength";
+      const isIncrease = actionInfo.action === "${PLUGIN_UUID}.dynamicincrease";
+      const isDecrease = actionInfo.action === "${PLUGIN_UUID}.dynamicdecrease";
+      const isReset = actionInfo.action === "${PLUGIN_UUID}.dynamicreset";
 
-      if (isFixed || isDynamic) {
-        document.getElementById("captureButtonSection").classList.remove("hidden");
+      if (isFixed || isDynamic || isIncrease || isDecrease || isReset) {
+        document.getElementById("actionSettingsSection").classList.remove("hidden");
         const saved = (actionInfo.payload && actionInfo.payload.settings) || {};
         actionState = Object.assign({}, saved, {
           fixedDuration: saved.fixedDuration || "00:30",
+          stepDuration: saved.stepDuration || "00:30",
+          minFloor: saved.minFloor || "",
+          resetDuration: saved.resetDuration || "00:30",
           openAfterSave: Boolean(saved.openAfterSave)
         });
-        document.getElementById("openAfterSave").checked = actionState.openAfterSave;
 
+        if (isFixed || isDynamic) {
+          document.getElementById("openAfterSaveWrap").classList.remove("hidden");
+          document.getElementById("openAfterSave").checked = actionState.openAfterSave;
+        }
         if (isFixed) {
           document.getElementById("fixedOnlyRow").classList.remove("hidden");
           document.getElementById("fixedDuration").value = actionState.fixedDuration;
         }
         if (isDynamic) {
           document.getElementById("dynamicOnlyRow").classList.remove("hidden");
+        }
+        if (isIncrease || isDecrease) {
+          document.getElementById("stepOnlyRow").classList.remove("hidden");
+          document.getElementById("stepDurationLabel").textContent = isIncrease
+            ? "Increase Step Length (HH:MM:SS, MM:SS, or sec)"
+            : "Decrease Step Length (HH:MM:SS, MM:SS, or sec)";
+          document.getElementById("stepDuration").value = actionState.stepDuration;
+        }
+        if (isDecrease) {
+          document.getElementById("minFloorRow").classList.remove("hidden");
+          document.getElementById("minFloor").value = actionState.minFloor;
+        }
+        if (isReset) {
+          document.getElementById("resetOnlyRow").classList.remove("hidden");
+          document.getElementById("resetDuration").value = actionState.resetDuration;
         }
       }
 
@@ -1614,12 +1720,16 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
           const incoming = (msg.payload && msg.payload.settings) || {};
           actionState = Object.assign({}, actionState, incoming, {
             fixedDuration: incoming.fixedDuration || actionState.fixedDuration || "00:30",
+            stepDuration: incoming.stepDuration || actionState.stepDuration || "00:30",
+            minFloor: incoming.minFloor !== undefined ? incoming.minFloor : (actionState.minFloor || ""),
+            resetDuration: incoming.resetDuration || actionState.resetDuration || "00:30",
             openAfterSave: Boolean(incoming.openAfterSave)
           });
           document.getElementById("openAfterSave").checked = actionState.openAfterSave;
-          if (isFixed) {
-            document.getElementById("fixedDuration").value = actionState.fixedDuration;
-          }
+          if (isFixed) document.getElementById("fixedDuration").value = actionState.fixedDuration;
+          if (isIncrease || isDecrease) document.getElementById("stepDuration").value = actionState.stepDuration;
+          if (isDecrease) document.getElementById("minFloor").value = actionState.minFloor;
+          if (isReset) document.getElementById("resetDuration").value = actionState.resetDuration;
           updateHints();
         } else if (msg.event === "sendToPropertyInspector" && msg.payload) {
           if (msg.payload.event === "ffmpegStatus") {
@@ -1637,11 +1747,12 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       };
     };
 
-    document.querySelectorAll("#masterHotkey, #dynamicStepLength, #mainCapturesDir, #outputDir, #ffmpegPath, #successSoundPath, #errorSoundPath")
+    document.querySelectorAll("#masterHotkey, #mainCapturesDir, #outputDir, #ffmpegPath, #successSoundPath, #errorSoundPath")
       .forEach((el) => el.addEventListener("input", persistGlobal));
     document.getElementById("deleteOriginal").addEventListener("change", persistGlobal);
     document.getElementById("enableDebugLog").addEventListener("change", persistGlobal);
-    document.getElementById("fixedDuration").addEventListener("input", persistAction);
+    document.querySelectorAll("#fixedDuration, #stepDuration, #minFloor, #resetDuration")
+      .forEach((el) => el.addEventListener("input", persistAction));
     document.getElementById("openAfterSave").addEventListener("change", persistAction);
 
     document.getElementById("verifyFfmpegBtn").addEventListener("click", () => {
@@ -1811,14 +1922,15 @@ export function generateReadmeMarkdown(): string {
 ## Included Stream Deck Actions
 Look under **ReplaySlice** in the right-hand Actions list of your Stream Deck software:
 1. **Fixed Length** — Saves a clip of a specific duration (\`HH:MM:SS\` or \`MM:SS\`) set on that button, with an optional per-button toggle to automatically open the clip after saving.
-2. **Dynamic Length** — Defaults to \`1:00\`. Updates its displayed duration automatically when you press Dynamic Increase / Decrease, and supports the per-button **Open clip automatically after saving** toggle independently on each placed Dynamic Length button. Style the font, size, color, and icon directly in Stream Deck's Title bar (leave the static Title text empty so the dynamic timer displays).
-3. **Dynamic Increase** — Adds your configured **Dynamic Step Length** to the Dynamic Length button.
-4. **Dynamic Decrease** — Subtracts your configured **Dynamic Step Length** from the Dynamic Length button.
-5. **Open Output Directory** — Opens your configured Output Directory in Explorer / Finder.
-6. **Open Captures Directory** — Opens your configured Main Captures Directory in Explorer / Finder.
+2. **Dynamic Length** — Defaults to \`1:00\`. Updates its displayed duration automatically when you press Dynamic Increase / Decrease / Reset, and supports the per-button **Open clip automatically after saving** toggle independently on each placed Dynamic Length button. Style the font, size, color, and icon directly in Stream Deck's Title bar (leave the static Title text empty so the dynamic timer displays).
+3. **Dynamic Increase** — Adds a button-specific step duration (default \`00:30\`) to the Dynamic Length timer. Place multiple buttons with different step sizes as needed.
+4. **Dynamic Decrease** — Subtracts a button-specific step duration (default \`00:30\`) from the Dynamic Length timer, with an optional minimum floor. Place multiple buttons (e.g. a small step and a huge drop) independently.
+5. **Reset Dynamic Length** — Sets Dynamic Length directly to a button-specific target duration (default \`00:30\`). Place multiple reset/preset buttons for instant jumps to any duration.
+6. **Open Output Directory** — Opens your configured Output Directory in Explorer / Finder.
+7. **Open Captures Directory** — Opens your configured Main Captures Directory in Explorer / Finder.
 
 ## Key Behaviors
-- **2-Second Capture Debounce**: Rapidly pressing *Fixed Length* or *Dynamic Length* within 2 seconds ignores extra presses. *Dynamic Increase* and *Dynamic Decrease* are never debounced.
+- **2-Second Capture Debounce**: Rapidly pressing *Fixed Length* or *Dynamic Length* within 2 seconds ignores extra presses. *Dynamic Increase*, *Dynamic Decrease*, and *Reset Dynamic Length* are never debounced.
 - **Zero Re-Encoding & Aligned Audio/Video**: Waits for OBS / ShadowPlay to close its write lock so the file is 100% flushed, inspects audio & video durations via \`ffprobe\`, snaps to the nearest keyframe, and runs \`ffmpeg -c copy -avoid_negative_ts make_zero -shortest\` so audio and video lengths match without cutting off a 1.5s tail.
 - **Dynamic Fail Timer**: Minimum 10 seconds, plus 2 seconds for every 5 minutes of the capture length (e.g. \`10:30\` = 14s fail timer, \`01:00:00\` = 34s fail timer). Plays your Success Sound (\`.wav\` or \`.mp3\`) if configured once the trimmed clip is verified on disk, or Failure Sound if it fails/times out.
 `;
@@ -1830,7 +1942,7 @@ export function getAllGeneratedPluginFiles(settings: GlobalPluginSettings): Gene
       path: `${SD_PLUGIN_FOLDER}/manifest.json`,
       label: 'manifest.json',
       language: 'json',
-      description: `Stream Deck SDK v2 manifest (v${PLUGIN_VERSION}) declaring Node.js 20 runtime and all 6 ReplaySlice button actions.`,
+      description: `Stream Deck SDK v2 manifest (v${PLUGIN_VERSION}) declaring Node.js 20 runtime and all 7 ReplaySlice button actions.`,
       content: generateManifestJson(),
     },
     {

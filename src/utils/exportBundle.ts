@@ -11,7 +11,7 @@ import {
   SD_PLUGIN_FOLDER,
 } from '../pluginTemplates/generatePluginFiles';
 
-type IconGlyph = 'plugin' | 'fixed' | 'dynamic' | 'plus' | 'minus' | 'folder' | 'blankKey';
+type IconGlyph = 'plugin' | 'fixed' | 'dynamic' | 'plus' | 'minus' | 'reset' | 'folder' | 'blankKey';
 
 async function renderStreamDeckIconPng(size: number, glyph: IconGlyph, isKeyFace = false): Promise<Blob> {
   const canvas = document.createElement('canvas');
@@ -80,6 +80,18 @@ async function renderStreamDeckIconPng(size: number, glyph: IconGlyph, isKeyFace
     ctx.moveTo(cx - arm, cy);
     ctx.lineTo(cx + arm, cy);
     ctx.stroke();
+  } else if (glyph === 'reset') {
+    // Counter-clockwise reset arrow with center dot
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * 0.92, -Math.PI * 0.75, Math.PI * 0.85, false);
+    ctx.stroke();
+    const rx = cx + r * 0.92 * Math.cos(-Math.PI * 0.75);
+    const ry = cy + r * 0.92 * Math.sin(-Math.PI * 0.75);
+    ctx.beginPath();
+    ctx.moveTo(rx - size * 0.03, ry - size * 0.11);
+    ctx.lineTo(rx - size * 0.04, ry + size * 0.03);
+    ctx.lineTo(rx + size * 0.1, ry + size * 0.02);
+    ctx.stroke();
   } else if (glyph === 'folder') {
     const w = size * 0.58;
     const h = size * 0.42;
@@ -121,6 +133,8 @@ async function populateSdPluginDirectory(sdRoot: JSZip, settings: GlobalPluginSe
   imgs.file('action-plus@2x.png', await renderStreamDeckIconPng(40, 'plus', false));
   imgs.file('action-minus.png', await renderStreamDeckIconPng(20, 'minus', false));
   imgs.file('action-minus@2x.png', await renderStreamDeckIconPng(40, 'minus', false));
+  imgs.file('action-reset.png', await renderStreamDeckIconPng(20, 'reset', false));
+  imgs.file('action-reset@2x.png', await renderStreamDeckIconPng(40, 'reset', false));
   imgs.file('action-folder.png', await renderStreamDeckIconPng(20, 'folder', false));
   imgs.file('action-folder@2x.png', await renderStreamDeckIconPng(40, 'folder', false));
   imgs.file('action-captures.png', await renderStreamDeckIconPng(20, 'folder', false));

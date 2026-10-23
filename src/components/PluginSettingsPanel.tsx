@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { Download, FolderArchive, Keyboard, Volume2 } from 'lucide-react';
 import { GlobalPluginSettings } from '../types/plugin';
-import { parseTimecodeToSeconds } from '../utils/timecode';
 import { playEmulatorCue } from '../utils/soundCue';
 import { PLUGIN_VERSION } from '../pluginTemplates/generatePluginFiles';
 
@@ -27,8 +26,6 @@ export function PluginSettingsPanel({
   onUploadPreviewAudio,
 }: PluginSettingsPanelProps) {
   const [isRecordingHotkey, setIsRecordingHotkey] = useState(false);
-
-  const dynamicStepSec = Math.max(1, parseTimecodeToSeconds(settings.dynamicStepLength, 30));
 
   const updateField = <K extends keyof GlobalPluginSettings>(key: K, value: GlobalPluginSettings[K]) => {
     onChange({ ...settings, [key]: value });
@@ -138,25 +135,7 @@ export function PluginSettingsPanel({
             </p>
           </div>
 
-          {/* 2. Dynamic Step Length */}
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="cfg-dyn-step" className="text-xs font-medium text-slate-300">
-              Dynamic Step Length (HH:MM:SS, MM:SS, or sec)
-            </label>
-            <input
-              id="cfg-dyn-step"
-              type="text"
-              value={settings.dynamicStepLength}
-              onChange={(e) => updateField('dynamicStepLength', e.target.value)}
-              placeholder="00:30"
-              className="w-full bg-[#0B0F17] border border-slate-700/90 focus:border-blue-500 rounded-lg px-3 py-2 text-sm font-mono tabular-nums text-slate-100 outline-none transition-colors"
-            />
-            <p className="text-xs text-slate-500 tabular-nums">
-              Adds or subtracts {dynamicStepSec}s per press of Dynamic Increase / Decrease.
-            </p>
-          </div>
-
-          {/* 3. FFmpeg Path (Optional) */}
+          {/* 2. FFmpeg Path (Optional) */}
           <div className="flex flex-col gap-1.5">
             <label htmlFor="cfg-ffmpeg" className="text-xs font-medium text-slate-300">
               FFmpeg Path (Optional)
