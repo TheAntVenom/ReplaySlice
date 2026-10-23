@@ -1,6 +1,7 @@
 import { GeneratedPluginFile, GlobalPluginSettings } from '../types/plugin';
 
 export const PLUGIN_UUID = 'com.antvenom.replayslice';
+export const PLUGIN_VERSION = '1.0.0';
 export const SD_PLUGIN_FOLDER = `${PLUGIN_UUID}.sdPlugin`;
 
 export function generateManifestJson(): string {
@@ -8,7 +9,7 @@ export function generateManifestJson(): string {
     $schema: 'https://schemas.elgato.com/streamdeck/plugins/manifest.json',
     UUID: PLUGIN_UUID,
     Name: 'ReplaySlice',
-    Version: '1.1.1',
+    Version: PLUGIN_VERSION,
     Author: 'ReplaySlice',
     Description:
       'Multi-length Instant Replay trimmer for OBS, ShadowPlay, and any capture software using FFmpeg stream copy.',
@@ -1722,7 +1723,7 @@ export function getAllGeneratedPluginFiles(settings: GlobalPluginSettings): Gene
       path: `${SD_PLUGIN_FOLDER}/manifest.json`,
       label: 'manifest.json',
       language: 'json',
-      description: 'Stream Deck SDK v2 manifest (v1.1.0) declaring Node.js 20 runtime and all 6 ReplaySlice button actions.',
+      description: `Stream Deck SDK v2 manifest (v${PLUGIN_VERSION}) declaring Node.js 20 runtime and all 6 ReplaySlice button actions.`,
       content: generateManifestJson(),
     },
     {

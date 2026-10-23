@@ -3,6 +3,7 @@ import { Download, FolderArchive, Keyboard, Volume2 } from 'lucide-react';
 import { GlobalPluginSettings } from '../types/plugin';
 import { parseTimecodeToSeconds } from '../utils/timecode';
 import { playEmulatorCue } from '../utils/soundCue';
+import { PLUGIN_VERSION } from '../pluginTemplates/generatePluginFiles';
 
 interface PluginSettingsPanelProps {
   settings: GlobalPluginSettings;
@@ -70,7 +71,7 @@ export function PluginSettingsPanel({
         <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 pb-6 border-b border-slate-800">
           <div className="max-w-2xl">
             <p className="text-xs font-medium text-slate-400 mb-2">
-              Elgato Stream Deck SDK v2 · Windows 10/11 &amp; macOS · Standalone Node 20 Runtime
+              ReplaySlice v{PLUGIN_VERSION} · Elgato Stream Deck SDK v2 · Windows 10/11 &amp; macOS
             </p>
             <h1 className="text-2xl md:text-3xl font-semibold text-slate-50 tracking-tight">
               Configure &amp; Export Your Stream Deck Plugin
