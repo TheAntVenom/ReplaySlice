@@ -71,6 +71,7 @@ Once installed, find **ReplaySlice** in the right-hand Actions sidebar of the El
 | Setting | Scope | Description |
 | :--- | :--- | :--- |
 | **Fixed Replay Length** | *Fixed Length* key | Duration to keep (`HH:MM:SS`, `MM:SS`, or seconds — e.g. `00:30` or `05:00`). |
+| **Open Clip After Saving** | *Fixed* & *Dynamic Length* keys | Optional per-button checkbox that opens the newly trimmed clip in your default media player immediately after saving. Saved independently per key so you can have separate silent-save and instant-review buttons (including multiple *Dynamic Length* keys). |
 | **Master Replay Hotkey** | Global | Shortcut sent to trigger your recorder's Instant Replay save (e.g. `Alt+F10` for ShadowPlay, or your OBS Replay Buffer hotkey). Includes a one-click **Record** button. |
 | **Dynamic Step Length** | Global | Amount added or subtracted per press of *Dynamic Increase* / *Dynamic Decrease* (default `00:30`). |
 | **Main Captures Directory** | Global | Folder where OBS or ShadowPlay writes master replay files. Automatically scans subfolders (supporting ShadowPlay's per-game folders). |

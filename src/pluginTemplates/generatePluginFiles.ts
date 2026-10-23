@@ -1,7 +1,7 @@
 import { GeneratedPluginFile, GlobalPluginSettings } from '../types/plugin';
 
 export const PLUGIN_UUID = 'com.antvenom.replayslice';
-export const PLUGIN_VERSION = '1.0.0';
+export const PLUGIN_VERSION = '1.0.1';
 export const SD_PLUGIN_FOLDER = `${PLUGIN_UUID}.sdPlugin`;
 
 export function generateManifestJson(): string {
@@ -134,6 +134,7 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
       successSoundPath: defaults.successSoundPath || '',
       errorSoundPath: defaults.errorSoundPath || '',
       dynamicCurrentSeconds: 60,
+      enableDebugLog: false,
     },
     null,
     2
@@ -160,6 +161,7 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     'const PLUGIN_ROOT = path.resolve(__dirname, "..");',
     'const LOG_DIR = path.join(PLUGIN_ROOT, "logs");',
     'const LOG_FILE = path.join(LOG_DIR, "replayslice.log");',
+    'const FORCE_DEBUG_LOG = false; // Developer override: set true or toggle Diagnostics in Property Inspector',
     '',
     'const ACTION_FIXED = "com.antvenom.replayslice.fixedlength";',
     'const ACTION_DYNAMIC = "com.antvenom.replayslice.dynamiclength";',
@@ -172,11 +174,13 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     'const DEBOUNCE_MS = 2000;',
     '',
     `const DEFAULT_GLOBAL_SETTINGS = ${serializedDefaults};`,
+    'let globalSettings = { ...DEFAULT_GLOBAL_SETTINGS };',
     '',
     'function writeLog(level, message, extra = "") {',
+    '  if (!FORCE_DEBUG_LOG && (!globalSettings || !globalSettings.enableDebugLog)) return;',
     '  try {',
     '    if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR, { recursive: true });',
-    '    if (fs.existsSync(LOG_FILE) && fs.statSync(LOG_FILE).size > 2 * 1024 * 1024) {',
+    '    if (fs.existsSync(LOG_FILE) && fs.statSync(LOG_FILE).size > 512 * 1024) {',
     '      fs.renameSync(LOG_FILE, LOG_FILE + ".old");',
     '    }',
     '    const stamp = new Date().toISOString();',
@@ -895,7 +899,6 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '  process.exit(1);',
     '}',
     '',
-    'let globalSettings = { ...DEFAULT_GLOBAL_SETTINGS };',
     'const visibleContexts = new Map(); // context -> { action, settings }',
     'let lastCaptureTriggerAt = 0;',
     'let captureInFlight = false;',
@@ -951,8 +954,40 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '    child.unref();',
     '  }',
     '}',
+    'async function openFileInDefaultPlayer(filePath) {',
+    '  const resolved = path.resolve(filePath);',
+    '  try {',
+    '    if (process.platform === "win32") {',
+    '      // cmd.exe built-in `start` initializes COM in STA, passes SEE_MASK_NOASYNC (waits for',
+    '      // async UWP/DDE activation like Windows 11 Media Player, Movies & TV, or VLC before exiting),',
+    '      // and explicitly sets SW_SHOWNORMAL so the player window opens visible in the foreground.',
+    '      const safeCmdPath = resolved.replace(/"/g, "").replace(/%/g, "%%");',
+    '      await new Promise((resolve, reject) => {',
+    '        const child = execFile(',
+    '          "cmd.exe",',
+    '          ["/d", "/s", "/c", `"start "" "${safeCmdPath}""`],',
+    '          { windowsVerbatimArguments: true, windowsHide: true, timeout: 8000 },',
+    '          (err) => (err ? reject(err) : resolve())',
+    '        );',
+    '        child.on("error", reject);',
+    '      });',
+    '    } else if (process.platform === "darwin") {',
+    '      const child = spawn("open", [resolved], { detached: true, stdio: "ignore" });',
+    '      child.unref();',
+    '    }',
+    '    writeLog("INFO", "Opened saved clip in default media player", resolved);',
+    '  } catch (err) {',
+    '    writeLog("WARN", "Primary auto-open failed, attempting explorer fallback", err.message);',
+    '    if (process.platform === "win32") {',
+    '      try {',
+    '        const fallback = spawn("explorer.exe", [resolved], { detached: true, stdio: "ignore" });',
+    '        fallback.unref();',
+    '      } catch {}',
+    '    }',
+    '  }',
+    '}',
     '',
-    'async function executeCaptureFlow(context, requestedSeconds) {',
+    'async function executeCaptureFlow(context, requestedSeconds, openAfterSave = false) {',
     '  const now = Date.now();',
     '  // 2-second debounce strictly on capture buttons',
     '  if (now - lastCaptureTriggerAt < DEBOUNCE_MS || captureInFlight) {',
@@ -1041,6 +1076,10 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '        writeLog("WARN", "Could not delete original master capture", delErr.message);',
     '      }',
     '    }',
+    '    // 9) Optionally open the newly created clip in the default OS media player (per-button setting)',
+    '    if (openAfterSave) {',
+    '      await openFileInDefaultPlayer(outputFileCreated);',
+    '    }',
     '',
     '    sd.sendJSON({ event: "showOk", context });',
     '    await playSoundFile(globalSettings.successSoundPath, ffplayHint);',
@@ -1114,6 +1153,16 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '    globalSettings.dynamicCurrentSeconds = 60;',
     '    saveGlobalSettings();',
     '    refreshAllDynamicButtons();',
+    '  } else if (payload.cmd === "syncActionSettings" && payload.actionContext && payload.settings) {',
+    '    const existing = visibleContexts.get(payload.actionContext) || { action, settings: {} };',
+    '    existing.settings = { ...existing.settings, ...payload.settings };',
+    '    visibleContexts.set(payload.actionContext, existing);',
+    '    sd.sendJSON({',
+    '      event: "setSettings",',
+    '      context: payload.actionContext,',
+    '      payload: existing.settings,',
+    '    });',
+    '    writeLog("INFO", "Synced per-button settings", { actionContext: payload.actionContext, settings: existing.settings });',
     '  }',
     '}',
     '',
@@ -1164,12 +1213,21 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '',
     '  if (event === "keyDown") {',
     '    if (action === ACTION_FIXED) {',
-    '      const btnSettings = (payload && payload.settings) || (visibleContexts.get(context) || {}).settings || {};',
+    '      const cached = (visibleContexts.get(context) || {}).settings || {};',
+    '      const incoming = (payload && payload.settings) || {};',
+    '      const btnSettings = { ...cached, ...incoming };',
     '      const fixedSec = Math.max(1, parseTimecodeToSeconds(btnSettings.fixedDuration || "00:30", 30));',
-    '      executeCaptureFlow(context, fixedSec);',
+    '      const openAfterSave = Boolean(btnSettings.openAfterSave);',
+    '      writeLog("INFO", "Fixed Length button pressed", { context, fixedSec, openAfterSave });',
+    '      executeCaptureFlow(context, fixedSec, openAfterSave);',
     '    } else if (action === ACTION_DYNAMIC) {',
+    '      const cached = (visibleContexts.get(context) || {}).settings || {};',
+    '      const incoming = (payload && payload.settings) || {};',
+    '      const btnSettings = { ...cached, ...incoming };',
     '      const dynSec = Math.max(1, Number(globalSettings.dynamicCurrentSeconds) || 60);',
-    '      executeCaptureFlow(context, dynSec);',
+    '      const openAfterSave = Boolean(btnSettings.openAfterSave);',
+    '      writeLog("INFO", "Dynamic Length button pressed", { context, dynSec, openAfterSave });',
+    '      executeCaptureFlow(context, dynSec, openAfterSave);',
     '    } else if (action === ACTION_INCREASE) {',
     '      const step = Math.max(1, parseTimecodeToSeconds(globalSettings.dynamicStepLength || "00:30", 30));',
     '      globalSettings.dynamicCurrentSeconds = Math.max(1, (Number(globalSettings.dynamicCurrentSeconds) || 60) + step);',
@@ -1208,6 +1266,7 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
     ffmpegPath: defaults.ffmpegPath || '',
     successSoundPath: defaults.successSoundPath || '',
     errorSoundPath: defaults.errorSoundPath || '',
+    enableDebugLog: false,
   });
 
   return `<!DOCTYPE html>
@@ -1292,20 +1351,17 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
   </style>
 </head>
 <body>
-  <!-- Per-Button Settings: Fixed Length ONLY -->
-  <div id="fixedSection" class="hidden">
+  <!-- Per-Button Settings: Fixed Length & Dynamic Length -->
+  <div id="captureButtonSection" class="hidden">
     <div class="section-heading">Button Action Settings</div>
-    <div class="row">
+
+    <div id="fixedOnlyRow" class="row hidden">
       <label for="fixedDuration">Fixed Replay Length (HH:MM:SS or MM:SS)</label>
       <input id="fixedDuration" type="text" placeholder="00:30" value="00:30" />
       <div id="fixedDurationHint" class="hint">Saves the last 30s · Fail timer: 10s</div>
     </div>
-  </div>
 
-  <!-- Per-Button Note: Dynamic Length ONLY -->
-  <div id="dynamicSection" class="hidden">
-    <div class="section-heading">Dynamic Length Button</div>
-    <div class="row">
+    <div id="dynamicOnlyRow" class="row hidden">
       <div id="dynamicDurationHint" class="hint">Current Dynamic Length: 60s · Fail timer: 10s</div>
       <div class="hint">
         Use Stream Deck's native Title bar above to choose your preferred font, size, color, and position. Leave the Title text box empty so ReplaySlice can update the live duration automatically.
@@ -1313,6 +1369,14 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       <div>
         <button id="resetDynamicBtn" type="button">Reset Dynamic Length to 1:00</button>
       </div>
+    </div>
+
+    <label class="checkbox-row">
+      <input id="openAfterSave" type="checkbox" />
+      <span>Open clip automatically after saving</span>
+    </label>
+    <div class="hint" style="margin-top: -6px; margin-bottom: 10px;">
+      Applies only to this button — you can place separate buttons that do or don't open the saved clip.
     </div>
   </div>
 
@@ -1384,13 +1448,22 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
     </div>
   </div>
 
+  <details style="margin-top: 14px; border-top: 1px solid #3D3D3D; padding-top: 8px;">
+    <summary style="cursor: pointer; color: #7A7A7A; font-size: 11px; user-select: none;">Diagnostics</summary>
+    <label class="checkbox-row" style="margin: 8px 0 4px;">
+      <input id="enableDebugLog" type="checkbox" />
+      <span>Enable debug log file</span>
+    </label>
+    <div class="hint">Off by default. Writes capped logs to logs/replayslice.log only while enabled.</div>
+  </details>
+
   <script>
     const DEFAULTS = ${serializedDefaults};
     let websocket = null;
     let piUUID = "";
     let actionInfo = null;
     let globalState = Object.assign({}, DEFAULTS);
-    let actionState = { fixedDuration: "00:30" };
+    let actionState = { fixedDuration: "00:30", openAfterSave: false };
     let recordingHotkey = false;
 
     function parseTimecode(raw, fallback) {
@@ -1440,6 +1513,7 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
         if (el && globalState[id] !== undefined) el.value = globalState[id];
       });
       document.getElementById("deleteOriginal").checked = globalState.deleteOriginal !== false;
+      document.getElementById("enableDebugLog").checked = Boolean(globalState.enableDebugLog);
       updateHints();
     }
 
@@ -1452,7 +1526,8 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
         deleteOriginal: document.getElementById("deleteOriginal").checked,
         ffmpegPath: document.getElementById("ffmpegPath").value.trim(),
         successSoundPath: document.getElementById("successSoundPath").value.trim(),
-        errorSoundPath: document.getElementById("errorSoundPath").value.trim()
+        errorSoundPath: document.getElementById("errorSoundPath").value.trim(),
+        enableDebugLog: document.getElementById("enableDebugLog").checked
       });
       updateHints();
       if (websocket && websocket.readyState === 1) {
@@ -1466,7 +1541,8 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
 
     function persistAction() {
       actionState = Object.assign({}, actionState, {
-        fixedDuration: document.getElementById("fixedDuration").value.trim() || "00:30"
+        fixedDuration: document.getElementById("fixedDuration").value.trim() || "00:30",
+        openAfterSave: document.getElementById("openAfterSave").checked
       });
       updateHints();
       if (websocket && websocket.readyState === 1) {
@@ -1475,6 +1551,13 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
           context: piUUID,
           payload: actionState
         }));
+        if (actionInfo && actionInfo.context) {
+          sendPluginCmd({
+            cmd: "syncActionSettings",
+            actionContext: actionInfo.context,
+            settings: actionState
+          });
+        }
       }
     }
 
@@ -1492,21 +1575,32 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       piUUID = inUUID;
       actionInfo = JSON.parse(inActionInfo);
 
-      if (actionInfo.action === "${PLUGIN_UUID}.fixedlength") {
-        document.getElementById("fixedSection").classList.remove("hidden");
-        const savedFixed = actionInfo.payload && actionInfo.payload.settings && actionInfo.payload.settings.fixedDuration;
-        if (savedFixed) {
-          actionState.fixedDuration = savedFixed;
-          document.getElementById("fixedDuration").value = savedFixed;
+      const isFixed = actionInfo.action === "${PLUGIN_UUID}.fixedlength";
+      const isDynamic = actionInfo.action === "${PLUGIN_UUID}.dynamiclength";
+
+      if (isFixed || isDynamic) {
+        document.getElementById("captureButtonSection").classList.remove("hidden");
+        const saved = (actionInfo.payload && actionInfo.payload.settings) || {};
+        actionState = Object.assign({}, saved, {
+          fixedDuration: saved.fixedDuration || "00:30",
+          openAfterSave: Boolean(saved.openAfterSave)
+        });
+        document.getElementById("openAfterSave").checked = actionState.openAfterSave;
+
+        if (isFixed) {
+          document.getElementById("fixedOnlyRow").classList.remove("hidden");
+          document.getElementById("fixedDuration").value = actionState.fixedDuration;
         }
-      } else if (actionInfo.action === "${PLUGIN_UUID}.dynamiclength") {
-        document.getElementById("dynamicSection").classList.remove("hidden");
+        if (isDynamic) {
+          document.getElementById("dynamicOnlyRow").classList.remove("hidden");
+        }
       }
 
       websocket = new WebSocket("ws://127.0.0.1:" + inPort);
       websocket.onopen = function() {
         websocket.send(JSON.stringify({ event: inRegisterEvent, uuid: inUUID }));
         websocket.send(JSON.stringify({ event: "getGlobalSettings", context: inUUID }));
+        websocket.send(JSON.stringify({ event: "getSettings", context: inUUID }));
         sendPluginCmd({ cmd: "verifyFfmpeg" });
       };
 
@@ -1516,6 +1610,17 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
           const incoming = (msg.payload && msg.payload.settings) || {};
           globalState = Object.assign({}, DEFAULTS, incoming);
           renderGlobalFields();
+        } else if (msg.event === "didReceiveSettings") {
+          const incoming = (msg.payload && msg.payload.settings) || {};
+          actionState = Object.assign({}, actionState, incoming, {
+            fixedDuration: incoming.fixedDuration || actionState.fixedDuration || "00:30",
+            openAfterSave: Boolean(incoming.openAfterSave)
+          });
+          document.getElementById("openAfterSave").checked = actionState.openAfterSave;
+          if (isFixed) {
+            document.getElementById("fixedDuration").value = actionState.fixedDuration;
+          }
+          updateHints();
         } else if (msg.event === "sendToPropertyInspector" && msg.payload) {
           if (msg.payload.event === "ffmpegStatus") {
             const st = document.getElementById("ffmpegStatus");
@@ -1535,7 +1640,9 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
     document.querySelectorAll("#masterHotkey, #dynamicStepLength, #mainCapturesDir, #outputDir, #ffmpegPath, #successSoundPath, #errorSoundPath")
       .forEach((el) => el.addEventListener("input", persistGlobal));
     document.getElementById("deleteOriginal").addEventListener("change", persistGlobal);
+    document.getElementById("enableDebugLog").addEventListener("change", persistGlobal);
     document.getElementById("fixedDuration").addEventListener("input", persistAction);
+    document.getElementById("openAfterSave").addEventListener("change", persistAction);
 
     document.getElementById("verifyFfmpegBtn").addEventListener("click", () => {
       sendPluginCmd({ cmd: "verifyFfmpeg", ffmpegPath: document.getElementById("ffmpegPath").value.trim() });
@@ -1703,8 +1810,8 @@ export function generateReadmeMarkdown(): string {
 
 ## Included Stream Deck Actions
 Look under **ReplaySlice** in the right-hand Actions list of your Stream Deck software:
-1. **Fixed Length** — Saves a clip of a specific duration (\`HH:MM:SS\` or \`MM:SS\`) set on that button.
-2. **Dynamic Length** — Defaults to \`1:00\`. Updates its displayed duration automatically when you press Dynamic Increase / Decrease. Style the font, size, color, and icon directly in Stream Deck's Title bar (leave the static Title text empty so the dynamic timer displays).
+1. **Fixed Length** — Saves a clip of a specific duration (\`HH:MM:SS\` or \`MM:SS\`) set on that button, with an optional per-button toggle to automatically open the clip after saving.
+2. **Dynamic Length** — Defaults to \`1:00\`. Updates its displayed duration automatically when you press Dynamic Increase / Decrease, and supports the per-button **Open clip automatically after saving** toggle independently on each placed Dynamic Length button. Style the font, size, color, and icon directly in Stream Deck's Title bar (leave the static Title text empty so the dynamic timer displays).
 3. **Dynamic Increase** — Adds your configured **Dynamic Step Length** to the Dynamic Length button.
 4. **Dynamic Decrease** — Subtracts your configured **Dynamic Step Length** from the Dynamic Length button.
 5. **Open Output Directory** — Opens your configured Output Directory in Explorer / Finder.

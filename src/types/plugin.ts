@@ -26,6 +26,7 @@ export interface DeckKeySlot {
   titleAlignment: 'top' | 'middle' | 'bottom';
   titleColor: string;
   fixedDurationInput: string; // Only used when actionType === FIXED_LENGTH (HH:MM:SS or MM:SS)
+  openAfterSave: boolean; // Per-button setting on Fixed Length & Dynamic Length
 }
 
 export interface CaptureLogEntry {
@@ -40,6 +41,7 @@ export interface CaptureLogEntry {
   outputDurationSeconds: number;
   wasClampedToBuffer: boolean;
   deletedOriginal: boolean;
+  openedAfterSave: boolean;
   failTimeoutBudgetSeconds: number;
   outputFileName: string;
   ffmpegCommand: string;

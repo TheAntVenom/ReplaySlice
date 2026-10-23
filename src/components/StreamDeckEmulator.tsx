@@ -74,6 +74,7 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     titleAlignment: 'middle',
     titleColor: '#F8FAFC',
     fixedDurationInput: '00:30',
+    openAfterSave: false,
   }));
 
   slots[0] = {
@@ -84,15 +85,17 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     titleAlignment: 'middle',
     titleColor: '#F8FAFC',
     fixedDurationInput: '00:30',
+    openAfterSave: false,
   };
   slots[1] = {
     slotIndex: 1,
     actionType: StreamDeckActionType.FIXED_LENGTH,
-    userTitle: 'Clip 5m',
+    userTitle: 'VOD 30s',
     titleFontSize: 13,
     titleAlignment: 'middle',
     titleColor: '#F8FAFC',
-    fixedDurationInput: '05:00',
+    fixedDurationInput: '00:30',
+    openAfterSave: true,
   };
   slots[2] = {
     slotIndex: 2,
@@ -102,6 +105,7 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     titleAlignment: 'middle',
     titleColor: '#FFFFFF',
     fixedDurationInput: '01:00',
+    openAfterSave: false,
   };
   slots[3] = {
     slotIndex: 3,
@@ -111,6 +115,7 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     titleAlignment: 'middle',
     titleColor: '#E2E8F0',
     fixedDurationInput: '00:30',
+    openAfterSave: false,
   };
   slots[4] = {
     slotIndex: 4,
@@ -120,6 +125,7 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     titleAlignment: 'middle',
     titleColor: '#E2E8F0',
     fixedDurationInput: '00:30',
+    openAfterSave: false,
   };
   slots[5] = {
     slotIndex: 5,
@@ -129,6 +135,7 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     titleAlignment: 'middle',
     titleColor: '#CBD5E1',
     fixedDurationInput: '00:30',
+    openAfterSave: false,
   };
   slots[6] = {
     slotIndex: 6,
@@ -138,6 +145,7 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     titleAlignment: 'middle',
     titleColor: '#CBD5E1',
     fixedDurationInput: '00:30',
+    openAfterSave: false,
   };
 
   return slots;
@@ -222,6 +230,7 @@ export function StreamDeckEmulator({
         outputDurationSeconds: 0,
         wasClampedToBuffer: false,
         deletedOriginal: false,
+        openedAfterSave: false,
         failTimeoutBudgetSeconds: captureFailTimeoutSeconds,
         outputFileName: '—',
         ffmpegCommand: '—',
@@ -264,6 +273,7 @@ export function StreamDeckEmulator({
           outputDurationSeconds: 0,
           wasClampedToBuffer: false,
           deletedOriginal: false,
+          openedAfterSave: false,
           failTimeoutBudgetSeconds: captureFailTimeoutSeconds,
           outputFileName: 'Not written',
           ffmpegCommand: 'Aborted — master/output clip failed to write within fail timer',
@@ -312,6 +322,9 @@ export function StreamDeckEmulator({
       if (settings.deleteOriginal) {
         noteParts.push('Deleted original master capture.');
       }
+      if (slot.openAfterSave) {
+        noteParts.push('Opened saved clip immediately in default media player.');
+      }
 
       const okEntry: CaptureLogEntry = {
         id: `${Date.now()}-${Math.random()}`,
@@ -325,6 +338,7 @@ export function StreamDeckEmulator({
         outputDurationSeconds: plan.outputDurationSeconds,
         wasClampedToBuffer: plan.wasClampedToBuffer,
         deletedOriginal: settings.deleteOriginal,
+        openedAfterSave: slot.openAfterSave,
         failTimeoutBudgetSeconds: captureFailTimeoutSeconds,
         outputFileName: plan.outputFileName,
         ffmpegCommand: plan.ffmpegCommand,
@@ -334,7 +348,7 @@ export function StreamDeckEmulator({
       setLogs((prev) => [okEntry, ...prev.slice(0, 14)]);
       setStatusBanner({
         tone: 'success',
-        message: `Saved ${plan.outputFileName} (${formatPreciseTimestamp(plan.keyframeStartSeconds)} → ${formatPreciseTimestamp(plan.alignedEndSeconds)} | Fail timer budget: ${captureFailTimeoutSeconds}s).${
+        message: `Saved ${plan.outputFileName}${slot.openAfterSave ? ' and opened clip in default player' : ''} (${formatPreciseTimestamp(plan.keyframeStartSeconds)} → ${formatPreciseTimestamp(plan.alignedEndSeconds)} | Fail timer: ${captureFailTimeoutSeconds}s).${
           hasSuccessSoundConfigured ? ' Played Success Sound.' : ''
         }`,
       });
@@ -748,24 +762,48 @@ export function StreamDeckEmulator({
                   )}
                 </div>
 
-                {/* Per-Button Property Inspector: Fixed Length ONLY */}
-                {selectedSlot.actionType === StreamDeckActionType.FIXED_LENGTH && (
-                  <div className="space-y-1.5 pt-3 border-t border-slate-800/80">
-                    <label htmlFor="slot-fixed-dur" className="text-xs font-medium text-slate-300">
-                      Fixed Replay Length (HH:MM:SS or MM:SS)
+                {/* Per-Button Property Inspector: Fixed Length & Dynamic Length */}
+                {(selectedSlot.actionType === StreamDeckActionType.FIXED_LENGTH ||
+                  selectedSlot.actionType === StreamDeckActionType.DYNAMIC_LENGTH) && (
+                  <div className="space-y-3 pt-3 border-t border-slate-800/80">
+                    <p className="text-xs font-medium text-slate-400">Button Action Settings</p>
+
+                    {selectedSlot.actionType === StreamDeckActionType.FIXED_LENGTH && (
+                      <div className="space-y-1.5">
+                        <label htmlFor="slot-fixed-dur" className="text-xs font-medium text-slate-300">
+                          Fixed Replay Length (HH:MM:SS or MM:SS)
+                        </label>
+                        <input
+                          id="slot-fixed-dur"
+                          type="text"
+                          value={selectedSlot.fixedDurationInput}
+                          onChange={(e) => updateSelectedSlot({ fixedDurationInput: e.target.value })}
+                          placeholder="00:30"
+                          className="w-full bg-[#131924] border border-slate-700 focus:border-blue-500 rounded-lg px-3 py-2 text-sm font-mono tabular-nums text-slate-100 outline-none"
+                        />
+                        <p className="text-xs font-mono tabular-nums text-slate-400">
+                          Captures last {inspectedCaptureSeconds}s · Fail timer:{' '}
+                          <span className="text-slate-100 font-semibold">{inspectedFailTimeoutSeconds}s</span> (10s + 2s per 5m)
+                        </p>
+                      </div>
+                    )}
+
+                    <label className="inline-flex items-start gap-2.5 cursor-pointer select-none pt-1">
+                      <input
+                        type="checkbox"
+                        checked={selectedSlot.openAfterSave}
+                        onChange={(e) => updateSelectedSlot({ openAfterSave: e.target.checked })}
+                        className="mt-0.5 w-4 h-4 rounded border-slate-600 bg-[#131924] text-blue-600"
+                      />
+                      <div>
+                        <span className="block text-xs font-medium text-slate-200">
+                          Open clip automatically after saving
+                        </span>
+                        <span className="block text-xs text-slate-500 mt-0.5">
+                          Saved independently on this key — you can place multiple Fixed or Dynamic Length buttons with different open behavior.
+                        </span>
+                      </div>
                     </label>
-                    <input
-                      id="slot-fixed-dur"
-                      type="text"
-                      value={selectedSlot.fixedDurationInput}
-                      onChange={(e) => updateSelectedSlot({ fixedDurationInput: e.target.value })}
-                      placeholder="00:30"
-                      className="w-full bg-[#131924] border border-slate-700 focus:border-blue-500 rounded-lg px-3 py-2 text-sm font-mono tabular-nums text-slate-100 outline-none"
-                    />
-                    <p className="text-xs font-mono tabular-nums text-slate-400">
-                      Captures last {inspectedCaptureSeconds}s · Fail timer:{' '}
-                      <span className="text-slate-100 font-semibold">{inspectedFailTimeoutSeconds}s</span> (10s + 2s per 5m)
-                    </p>
                   </div>
                 )}
               </>
