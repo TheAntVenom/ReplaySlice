@@ -1,0 +1,6 @@
+{
+  "summary":  "Implementation plan for ReplaySlice, a complete Elgato Stream Deck Instant Replay plugin and interactive web studio/exporter that replaces the legacy OBS Python script with lossless A/V-aligned FFmpeg trimming, zero tail cutoff, dynamic duration buttons, and 1-click local installation.",
+  "updatedAt":  "2026-10-23T19:10:51.641885387Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

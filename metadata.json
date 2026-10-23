@@ -1,0 +1,6 @@
+{
+  "name": "ReplaySlice — Stream Deck Instant Replay Plugin",
+  "description": "Multi-length Instant Replay Stream Deck plugin builder, emulator, and .streamDeckPlugin packager with zero-re-encode FFmpeg stream copying.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
