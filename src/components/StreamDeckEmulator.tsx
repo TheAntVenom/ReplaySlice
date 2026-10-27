@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { CheckCircle2, FolderOpen, RotateCcw, Trash2, XCircle } from 'lucide-react';
+import { CheckCircle2, ChevronRight, FolderOpen, RotateCcw, Trash2, XCircle } from 'lucide-react';
 import {
   CaptureLogEntry,
   DeckKeySlot,
   GlobalPluginSettings,
+  OpenAfterSaveMode,
   StreamDeckActionType,
 } from '../types/plugin';
 import {
@@ -42,14 +43,14 @@ const ACTION_CATALOG: Array<{
   {
     type: StreamDeckActionType.DYNAMIC_INCREASE,
     name: 'Dynamic Increase',
-    defaultTitle: '+ 0:30',
-    summary: 'Adds a button-specific step duration (default 00:30) to Dynamic Length.',
+    defaultTitle: '+',
+    summary: 'Defaults to "+" text. Adds a button-specific step duration (default 00:30) and auto-repeats while held.',
   },
   {
     type: StreamDeckActionType.DYNAMIC_DECREASE,
     name: 'Dynamic Decrease',
-    defaultTitle: '- 0:30',
-    summary: 'Subtracts a button-specific step duration (default 00:30) from Dynamic Length.',
+    defaultTitle: '-',
+    summary: 'Defaults to "-" text. Subtracts a button-specific step duration (default 00:30) and auto-repeats while held.',
   },
   {
     type: StreamDeckActionType.RESET_DYNAMIC_LENGTH,
@@ -83,7 +84,11 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     stepDurationInput: '00:30',
     minFloorInput: '',
     resetDurationInput: '00:30',
-    openAfterSave: false,
+    openAfterSaveMode: 'global',
+    fontSizeBoost: 0,
+    bgImagePath: '',
+    bgImagePreviewUrl: null,
+    customBoostText: '',
   }));
 
   slots[0] = {
@@ -97,7 +102,11 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     stepDurationInput: '00:30',
     minFloorInput: '',
     resetDurationInput: '00:30',
-    openAfterSave: false,
+    openAfterSaveMode: 'global',
+    fontSizeBoost: 0,
+    bgImagePath: '',
+    bgImagePreviewUrl: null,
+    customBoostText: '',
   };
   slots[1] = {
     slotIndex: 1,
@@ -110,46 +119,62 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     stepDurationInput: '00:30',
     minFloorInput: '',
     resetDurationInput: '00:30',
-    openAfterSave: true,
+    openAfterSaveMode: 'open',
+    fontSizeBoost: 0,
+    bgImagePath: '',
+    bgImagePreviewUrl: null,
+    customBoostText: '',
   };
   slots[2] = {
     slotIndex: 2,
     actionType: StreamDeckActionType.DYNAMIC_LENGTH,
     userTitle: '',
-    titleFontSize: 18,
+    titleFontSize: 16,
     titleAlignment: 'middle',
     titleColor: '#FFFFFF',
     fixedDurationInput: '01:00',
     stepDurationInput: '00:30',
     minFloorInput: '',
     resetDurationInput: '00:30',
-    openAfterSave: false,
+    openAfterSaveMode: 'global',
+    fontSizeBoost: 8,
+    bgImagePath: '',
+    bgImagePreviewUrl: null,
+    customBoostText: '',
   };
   slots[3] = {
     slotIndex: 3,
     actionType: StreamDeckActionType.DYNAMIC_INCREASE,
-    userTitle: 'Dyn +30s',
-    titleFontSize: 13,
+    userTitle: '',
+    titleFontSize: 16,
     titleAlignment: 'middle',
     titleColor: '#E2E8F0',
     fixedDurationInput: '00:30',
     stepDurationInput: '00:30',
     minFloorInput: '',
     resetDurationInput: '00:30',
-    openAfterSave: false,
+    openAfterSaveMode: 'global',
+    fontSizeBoost: 12,
+    bgImagePath: '',
+    bgImagePreviewUrl: null,
+    customBoostText: '',
   };
   slots[4] = {
     slotIndex: 4,
     actionType: StreamDeckActionType.DYNAMIC_DECREASE,
-    userTitle: 'Dyn -30s',
-    titleFontSize: 13,
+    userTitle: '',
+    titleFontSize: 16,
     titleAlignment: 'middle',
     titleColor: '#E2E8F0',
     fixedDurationInput: '00:30',
     stepDurationInput: '00:30',
     minFloorInput: '',
     resetDurationInput: '00:30',
-    openAfterSave: false,
+    openAfterSaveMode: 'global',
+    fontSizeBoost: 12,
+    bgImagePath: '',
+    bgImagePreviewUrl: null,
+    customBoostText: '',
   };
   slots[5] = {
     slotIndex: 5,
@@ -162,7 +187,11 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     stepDurationInput: '00:30',
     minFloorInput: '',
     resetDurationInput: '00:30',
-    openAfterSave: false,
+    openAfterSaveMode: 'global',
+    fontSizeBoost: 0,
+    bgImagePath: '',
+    bgImagePreviewUrl: null,
+    customBoostText: '',
   };
   slots[6] = {
     slotIndex: 6,
@@ -175,7 +204,11 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     stepDurationInput: '00:30',
     minFloorInput: '',
     resetDurationInput: '00:30',
-    openAfterSave: false,
+    openAfterSaveMode: 'global',
+    fontSizeBoost: 0,
+    bgImagePath: '',
+    bgImagePreviewUrl: null,
+    customBoostText: '',
   };
   slots[7] = {
     slotIndex: 7,
@@ -188,7 +221,11 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     stepDurationInput: '00:30',
     minFloorInput: '',
     resetDurationInput: '00:30',
-    openAfterSave: false,
+    openAfterSaveMode: 'global',
+    fontSizeBoost: 0,
+    bgImagePath: '',
+    bgImagePreviewUrl: null,
+    customBoostText: '',
   };
 
   return slots;
@@ -204,6 +241,13 @@ export function StreamDeckEmulator({
   const [dynamicSeconds, setDynamicSeconds] = useState<number>(60);
   const [pressedSlotIdx, setPressedSlotIdx] = useState<number | null>(null);
   const [slotBadgeFeedback, setSlotBadgeFeedback] = useState<Record<number, 'ok' | 'alert'>>({});
+  const [appearanceMenuOpen, setAppearanceMenuOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('replayslice_emu_appearance_open') === '1';
+    } catch {
+      return false;
+    }
+  });
 
   const [simulatedElapsedInput, setSimulatedElapsedInput] = useState<string>('07:00');
   const [simulateDiskTimeoutFailure, setSimulateDiskTimeoutFailure] = useState<boolean>(false);
@@ -219,6 +263,24 @@ export function StreamDeckEmulator({
   const lastCaptureEpochRef = useRef<number>(0);
   const captureRunningRef = useRef<boolean>(false);
   const [debounceRemainingMs, setDebounceRemainingMs] = useState<number>(0);
+
+  const holdDelayTimerRef = useRef<number | null>(null);
+  const holdRepeatTimerRef = useRef<number | null>(null);
+
+  const clearHoldTimers = () => {
+    if (holdDelayTimerRef.current !== null) {
+      window.clearTimeout(holdDelayTimerRef.current);
+      holdDelayTimerRef.current = null;
+    }
+    if (holdRepeatTimerRef.current !== null) {
+      window.clearInterval(holdRepeatTimerRef.current);
+      holdRepeatTimerRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    return () => clearHoldTimers();
+  }, []);
 
   useEffect(() => {
     if (debounceRemainingMs <= 0) return;
@@ -364,7 +426,14 @@ export function StreamDeckEmulator({
       if (settings.deleteOriginal) {
         noteParts.push('Deleted original master capture.');
       }
-      if (slot.openAfterSave) {
+      const shouldOpenAfterSave =
+        slot.openAfterSaveMode === 'open'
+          ? true
+          : slot.openAfterSaveMode === 'never'
+            ? false
+            : Boolean(settings.openAfterSave);
+
+      if (shouldOpenAfterSave) {
         noteParts.push('Opened saved clip immediately in default media player.');
       }
 
@@ -380,7 +449,7 @@ export function StreamDeckEmulator({
         outputDurationSeconds: plan.outputDurationSeconds,
         wasClampedToBuffer: plan.wasClampedToBuffer,
         deletedOriginal: settings.deleteOriginal,
-        openedAfterSave: slot.openAfterSave,
+        openedAfterSave: shouldOpenAfterSave,
         failTimeoutBudgetSeconds: captureFailTimeoutSeconds,
         outputFileName: plan.outputFileName,
         ffmpegCommand: plan.ffmpegCommand,
@@ -390,20 +459,14 @@ export function StreamDeckEmulator({
       setLogs((prev) => [okEntry, ...prev.slice(0, 14)]);
       setStatusBanner({
         tone: 'success',
-        message: `Saved ${plan.outputFileName}${slot.openAfterSave ? ' and opened clip in default player' : ''} (${formatPreciseTimestamp(plan.keyframeStartSeconds)} → ${formatPreciseTimestamp(plan.alignedEndSeconds)} | Fail timer: ${captureFailTimeoutSeconds}s).${
+        message: `Saved ${plan.outputFileName}${shouldOpenAfterSave ? ' and opened clip in default player' : ''} (${formatPreciseTimestamp(plan.keyframeStartSeconds)} → ${formatPreciseTimestamp(plan.alignedEndSeconds)} | Fail timer: ${captureFailTimeoutSeconds}s).${
           hasSuccessSoundConfigured ? ' Played Success Sound.' : ''
         }`,
       });
     }, 380);
   };
 
-  const handleKeyPress = (slot: DeckKeySlot) => {
-    setSelectedSlotIdx(slot.slotIndex);
-    setPressedSlotIdx(slot.slotIndex);
-    window.setTimeout(() => setPressedSlotIdx((cur) => (cur === slot.slotIndex ? null : cur)), 130);
-
-    if (!slot.actionType) return;
-
+  const applyStepForSlot = (slot: DeckKeySlot, isRepeatTick = false) => {
     if (slot.actionType === StreamDeckActionType.DYNAMIC_INCREASE) {
       const btnStepSec = Math.max(1, parseTimecodeToSeconds(slot.stepDurationInput, 30));
       setDynamicSeconds((prev) => {
@@ -411,7 +474,7 @@ export function StreamDeckEmulator({
         const nextFail = calculateFailTimeoutSeconds(next);
         setStatusBanner({
           tone: 'idle',
-          message: `Dynamic Increase (+${btnStepSec}s): Dynamic Length updated to ${formatDynamicButtonTitle(next)} (Fail timer: ${nextFail}s).`,
+          message: `Dynamic Increase (+${btnStepSec}s${isRepeatTick ? ' · hold repeat' : ''}): Dynamic Length updated to ${formatDynamicButtonTitle(next)} (Fail timer: ${nextFail}s).`,
         });
         return next;
       });
@@ -429,12 +492,71 @@ export function StreamDeckEmulator({
         const nextFail = calculateFailTimeoutSeconds(next);
         setStatusBanner({
           tone: 'idle',
-          message: `Dynamic Decrease (-${btnStepSec}s, floor ${formatDynamicButtonTitle(floorSec)}): Dynamic Length updated to ${formatDynamicButtonTitle(next)} (Fail timer: ${nextFail}s).`,
+          message: `Dynamic Decrease (-${btnStepSec}s, floor ${formatDynamicButtonTitle(floorSec)}${isRepeatTick ? ' · hold repeat' : ''}): Dynamic Length updated to ${formatDynamicButtonTitle(next)} (Fail timer: ${nextFail}s).`,
         });
         return next;
       });
+    }
+  };
+
+  const handleKeyPointerDown = (slot: DeckKeySlot) => {
+    setSelectedSlotIdx(slot.slotIndex);
+    setPressedSlotIdx(slot.slotIndex);
+
+    if (
+      slot.actionType !== StreamDeckActionType.DYNAMIC_INCREASE &&
+      slot.actionType !== StreamDeckActionType.DYNAMIC_DECREASE
+    ) {
       return;
     }
+
+    clearHoldTimers();
+    applyStepForSlot(slot, false);
+
+    const delaySec =
+      Number.isFinite(settings.repeatDelaySeconds) && settings.repeatDelaySeconds >= 0.05
+        ? Math.min(10, settings.repeatDelaySeconds)
+        : 0.5;
+    const rateHz =
+      Number.isFinite(settings.repeatRateHz) && settings.repeatRateHz >= 0.5
+        ? Math.min(30, settings.repeatRateHz)
+        : 5;
+    const delayMs = Math.round(delaySec * 1000);
+    const intervalMs = Math.max(33, Math.round(1000 / rateHz));
+
+    holdDelayTimerRef.current = window.setTimeout(() => {
+      holdDelayTimerRef.current = null;
+      applyStepForSlot(slot, true);
+      holdRepeatTimerRef.current = window.setInterval(() => {
+        applyStepForSlot(slot, true);
+      }, intervalMs);
+    }, delayMs);
+  };
+
+  const handleKeyPointerRelease = (slotIndex: number) => {
+    clearHoldTimers();
+    setPressedSlotIdx((cur) => (cur === slotIndex ? null : cur));
+  };
+
+  const handleKeyPress = (slot: DeckKeySlot, isKeyboardClick = false) => {
+    setSelectedSlotIdx(slot.slotIndex);
+
+    if (!slot.actionType) return;
+
+    if (
+      slot.actionType === StreamDeckActionType.DYNAMIC_INCREASE ||
+      slot.actionType === StreamDeckActionType.DYNAMIC_DECREASE
+    ) {
+      if (isKeyboardClick) {
+        setPressedSlotIdx(slot.slotIndex);
+        window.setTimeout(() => setPressedSlotIdx((cur) => (cur === slot.slotIndex ? null : cur)), 130);
+        applyStepForSlot(slot, false);
+      }
+      return;
+    }
+
+    setPressedSlotIdx(slot.slotIndex);
+    window.setTimeout(() => setPressedSlotIdx((cur) => (cur === slot.slotIndex ? null : cur)), 130);
 
     if (slot.actionType === StreamDeckActionType.RESET_DYNAMIC_LENGTH) {
       const targetSec = Math.max(1, parseTimecodeToSeconds(slot.resetDurationInput, 30));
@@ -485,14 +607,43 @@ export function StreamDeckEmulator({
 
   const assignActionToSelectedSlot = (actionType: StreamDeckActionType | null) => {
     if (!actionType) {
-      updateSelectedSlot({ actionType: null, userTitle: '' });
+      updateSelectedSlot({ actionType: null, userTitle: '', fontSizeBoost: 0 });
       return;
     }
     const meta = ACTION_CATALOG.find((a) => a.type === actionType);
+    const isAutoLabel =
+      actionType === StreamDeckActionType.DYNAMIC_LENGTH ||
+      actionType === StreamDeckActionType.DYNAMIC_INCREASE ||
+      actionType === StreamDeckActionType.DYNAMIC_DECREASE;
     updateSelectedSlot({
       actionType,
-      userTitle: actionType === StreamDeckActionType.DYNAMIC_LENGTH ? '' : meta?.defaultTitle ?? '',
-      titleFontSize: actionType === StreamDeckActionType.DYNAMIC_LENGTH ? 18 : 13,
+      userTitle: isAutoLabel ? '' : meta?.defaultTitle ?? '',
+      titleFontSize: isAutoLabel ? 16 : 13,
+      fontSizeBoost: 0,
+    });
+  };
+
+  const toggleAppearanceMenu = () => {
+    setAppearanceMenuOpen((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('replayslice_emu_appearance_open', next ? '1' : '0');
+      } catch {
+        // Ignore storage errors
+      }
+      return next;
+    });
+  };
+
+  const handleUploadSlotBgPreview = (file: File | null) => {
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    if (selectedSlot.bgImagePreviewUrl) {
+      URL.revokeObjectURL(selectedSlot.bgImagePreviewUrl);
+    }
+    updateSelectedSlot({
+      bgImagePreviewUrl: url,
+      bgImagePath: selectedSlot.bgImagePath.trim() || file.name,
     });
   };
 
@@ -557,83 +708,113 @@ export function StreamDeckEmulator({
                 <span>Reset 1:00</span>
               </button>
             </div>
-            <p className="text-xs text-slate-500">
-              Tap Dyn + / Dyn - on the deck below to dial e.g. 2:00 → 3:30, then press the Dynamic key.
-            </p>
+              <p className="text-xs text-slate-500">
+                Tap or press-and-hold <span className="font-mono text-slate-300">+</span> /{' '}
+                <span className="font-mono text-slate-300">-</span> on the deck below to dial Dynamic Length, then press the Dynamic key.
+              </p>
+            </div>
+
+            <div className="flex flex-col justify-center gap-2">
+              <label className="inline-flex items-start gap-2.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={simulateDiskTimeoutFailure}
+                  onChange={(e) => setSimulateDiskTimeoutFailure(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 rounded border-slate-600 bg-[#0B0F17] text-blue-600"
+                />
+                <div>
+                  <span className="block text-xs font-medium text-slate-200">
+                    Simulate clip failing to write to disk
+                  </span>
+                  <span className="block text-xs text-slate-500 mt-0.5">
+                    Tests the selected button&apos;s {inspectedFailTimeoutSeconds}s fail counter when no output clip is created.
+                  </span>
+                </div>
+              </label>
+            </div>
           </div>
 
-          <div className="flex flex-col justify-center gap-2">
-            <label className="inline-flex items-start gap-2.5 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={simulateDiskTimeoutFailure}
-                onChange={(e) => setSimulateDiskTimeoutFailure(e.target.checked)}
-                className="mt-0.5 w-4 h-4 rounded border-slate-600 bg-[#0B0F17] text-blue-600"
-              />
-              <div>
-                <span className="block text-xs font-medium text-slate-200">
-                  Simulate clip failing to write to disk
-                </span>
-                <span className="block text-xs text-slate-500 mt-0.5">
-                  Tests the selected button&apos;s {inspectedFailTimeoutSeconds}s fail counter when no output clip is created.
-                </span>
-              </div>
-            </label>
-          </div>
-        </div>
+          {/* Two-Column Hardware Deck + Stream Deck Native Button Inspector */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 pt-6 items-start">
+            {/* Left 7 cols: Physical 5x3 Stream Deck Keypad */}
+            <div className="lg:col-span-7 flex flex-col gap-4">
+              <div className="bg-[#0B0F17] border border-slate-800 rounded-xl p-5 sm:p-6">
+                <div className="flex items-center justify-between mb-4 text-xs text-slate-400">
+                  <span>Stream Deck 15-Key Layout (Click or hold + / - to test repeat)</span>
+                  <span className="font-mono tabular-nums">Slot #{selectedSlotIdx + 1}</span>
+                </div>
 
-        {/* Two-Column Hardware Deck + Stream Deck Native Button Inspector */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 pt-6 items-start">
-          {/* Left 7 cols: Physical 5x3 Stream Deck Keypad */}
-          <div className="lg:col-span-7 flex flex-col gap-4">
-            <div className="bg-[#0B0F17] border border-slate-800 rounded-xl p-5 sm:p-6">
-              <div className="flex items-center justify-between mb-4 text-xs text-slate-400">
-                <span>Stream Deck 15-Key Layout (Click any key to trigger &amp; inspect)</span>
-                <span className="font-mono tabular-nums">Slot #{selectedSlotIdx + 1}</span>
-              </div>
+                <div className="grid grid-cols-5 gap-3 sm:gap-4 max-w-[540px] mx-auto">
+                  {slots.map((slot) => {
+                    const isSelected = slot.slotIndex === selectedSlotIdx;
+                    const isPressed = slot.slotIndex === pressedSlotIdx;
+                    const feedback = slotBadgeFeedback[slot.slotIndex];
 
-              <div className="grid grid-cols-5 gap-3 sm:gap-4 max-w-[540px] mx-auto">
-                {slots.map((slot) => {
-                  const isSelected = slot.slotIndex === selectedSlotIdx;
-                  const isPressed = slot.slotIndex === pressedSlotIdx;
-                  const feedback = slotBadgeFeedback[slot.slotIndex];
+                    const isDynamic = slot.actionType === StreamDeckActionType.DYNAMIC_LENGTH;
+                    const boost = Math.max(0, Math.min(56, slot.fontSizeBoost || 0));
+                    const effectiveFontSize = Math.min(64, slot.titleFontSize + boost);
 
-                  const isDynamic = slot.actionType === StreamDeckActionType.DYNAMIC_LENGTH;
-                  const displayTitle = isDynamic
-                    ? slot.userTitle.trim() || formatDynamicButtonTitle(dynamicSeconds)
-                    : slot.userTitle;
+                    let displayTitle = slot.userTitle;
+                    if (boost > 0 && slot.customBoostText.trim()) {
+                      displayTitle = slot.customBoostText.replace(/\\n/g, '\n');
+                    } else if (isDynamic) {
+                      displayTitle = slot.userTitle.trim() || formatDynamicButtonTitle(dynamicSeconds);
+                    } else if (slot.actionType === StreamDeckActionType.DYNAMIC_INCREASE) {
+                      displayTitle = slot.userTitle.trim() || '+';
+                    } else if (slot.actionType === StreamDeckActionType.DYNAMIC_DECREASE) {
+                      displayTitle = slot.userTitle.trim() || '-';
+                    } else if (boost > 0 && !slot.userTitle.trim()) {
+                      if (slot.actionType === StreamDeckActionType.FIXED_LENGTH) {
+                        displayTitle = formatDynamicButtonTitle(
+                          Math.max(1, parseTimecodeToSeconds(slot.fixedDurationInput, 30))
+                        );
+                      } else if (slot.actionType === StreamDeckActionType.RESET_DYNAMIC_LENGTH) {
+                        displayTitle = formatDynamicButtonTitle(
+                          Math.max(1, parseTimecodeToSeconds(slot.resetDurationInput, 30))
+                        );
+                      }
+                    }
 
-                  const alignClass =
-                    slot.titleAlignment === 'top'
-                      ? 'items-start pt-2'
-                      : slot.titleAlignment === 'bottom'
-                        ? 'items-end pb-2'
-                        : 'items-center';
+                    const alignClass =
+                      slot.titleAlignment === 'top'
+                        ? 'items-start pt-2'
+                        : slot.titleAlignment === 'bottom'
+                          ? 'items-end pb-2'
+                          : 'items-center';
 
-                  return (
-                    <button
-                      key={slot.slotIndex}
-                      type="button"
-                      onClick={() => handleKeyPress(slot)}
-                      style={{
-                        transform: isPressed ? 'scale(0.94)' : 'scale(1)',
-                      }}
-                      className={`relative aspect-square rounded-xl border transition-transform duration-100 flex justify-center px-1.5 select-none cursor-pointer overflow-hidden ${alignClass} ${
-                        slot.actionType ? 'bg-[#141820]' : 'bg-[#0E1219]'
-                      } ${
-                        isSelected
-                          ? 'border-blue-500 ring-2 ring-blue-500/30'
-                          : 'border-slate-700/80 hover:border-slate-500'
-                      }`}
-                    >
+                    return (
+                      <button
+                        key={slot.slotIndex}
+                        type="button"
+                        onPointerDown={(e) => {
+                          if (e.button === 0) handleKeyPointerDown(slot);
+                        }}
+                        onPointerUp={() => handleKeyPointerRelease(slot.slotIndex)}
+                        onPointerLeave={() => handleKeyPointerRelease(slot.slotIndex)}
+                        onPointerCancel={() => handleKeyPointerRelease(slot.slotIndex)}
+                        onClick={(e) => handleKeyPress(slot, e.detail === 0)}
+                        style={{
+                          transform: isPressed ? 'scale(0.94)' : 'scale(1)',
+                          backgroundImage: slot.bgImagePreviewUrl ? `url(${slot.bgImagePreviewUrl})` : undefined,
+                          backgroundSize: 'cover',
+                          backgroundPosition: 'center',
+                        }}
+                        className={`relative aspect-square rounded-xl border transition-transform duration-100 flex justify-center px-1.5 select-none cursor-pointer overflow-hidden ${alignClass} ${
+                          slot.actionType ? 'bg-[#141820]' : 'bg-[#0E1219]'
+                        } ${
+                          isSelected
+                            ? 'border-blue-500 ring-2 ring-blue-500/30'
+                            : 'border-slate-700/80 hover:border-slate-500'
+                        }`}
+                      >
                       {displayTitle ? (
                         <span
                           style={{
-                            fontSize: `${slot.titleFontSize}px`,
+                            fontSize: `${effectiveFontSize}px`,
                             color: slot.titleColor,
                           }}
-                          className={`font-semibold leading-tight text-center break-words max-w-full ${
-                            isDynamic ? 'font-mono tabular-nums tracking-tight' : ''
+                          className={`font-semibold leading-none text-center whitespace-pre-line break-words max-w-full drop-shadow-sm ${
+                            isDynamic || boost > 0 ? 'font-mono tabular-nums tracking-tight' : ''
                           }`}
                         >
                           {displayTitle}
@@ -757,17 +938,17 @@ export function StreamDeckEmulator({
 
                     <div className="space-y-1">
                       <label htmlFor="slot-fontsize" className="text-xs text-slate-400">
-                        Font Size (pt)
+                        Stream Deck Font Size (max 16)
                       </label>
                       <input
                         id="slot-fontsize"
                         type="number"
-                        min={9}
-                        max={28}
+                        min={6}
+                        max={16}
                         value={selectedSlot.titleFontSize}
                         onChange={(e) =>
                           updateSelectedSlot({
-                            titleFontSize: Math.min(28, Math.max(9, Number(e.target.value) || 14)),
+                            titleFontSize: Math.min(16, Math.max(6, Number(e.target.value) || 14)),
                           })
                         }
                         className="w-full bg-[#131924] border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs font-mono tabular-nums text-slate-100 outline-none focus:border-blue-500"
@@ -821,14 +1002,9 @@ export function StreamDeckEmulator({
                   )}
                 </div>
 
-                {/* Per-Button Property Inspector */}
-                {(selectedSlot.actionType === StreamDeckActionType.FIXED_LENGTH ||
-                  selectedSlot.actionType === StreamDeckActionType.DYNAMIC_LENGTH ||
-                  selectedSlot.actionType === StreamDeckActionType.DYNAMIC_INCREASE ||
-                  selectedSlot.actionType === StreamDeckActionType.DYNAMIC_DECREASE ||
-                  selectedSlot.actionType === StreamDeckActionType.RESET_DYNAMIC_LENGTH) && (
-                  <div className="space-y-3 pt-3 border-t border-slate-800/80">
-                    <p className="text-xs font-medium text-slate-400">Button Action Settings</p>
+                {/* Per-Button Property Inspector (all ReplaySlice buttons support Custom Text Size & Key Background) */}
+                <div className="space-y-3 pt-3 border-t border-slate-800/80">
+                  <p className="text-xs font-medium text-slate-400">Button Action Settings</p>
 
                     {selectedSlot.actionType === StreamDeckActionType.FIXED_LENGTH && (
                       <div className="space-y-1.5">
@@ -852,22 +1028,28 @@ export function StreamDeckEmulator({
 
                     {(selectedSlot.actionType === StreamDeckActionType.FIXED_LENGTH ||
                       selectedSlot.actionType === StreamDeckActionType.DYNAMIC_LENGTH) && (
-                      <label className="inline-flex items-start gap-2.5 cursor-pointer select-none pt-1">
-                        <input
-                          type="checkbox"
-                          checked={selectedSlot.openAfterSave}
-                          onChange={(e) => updateSelectedSlot({ openAfterSave: e.target.checked })}
-                          className="mt-0.5 w-4 h-4 rounded border-slate-600 bg-[#131924] text-blue-600"
-                        />
-                        <div>
-                          <span className="block text-xs font-medium text-slate-200">
-                            Open clip automatically after saving
-                          </span>
-                          <span className="block text-xs text-slate-500 mt-0.5">
-                            Saved independently on this key — you can place multiple Fixed or Dynamic Length buttons with different open behavior.
-                          </span>
-                        </div>
-                      </label>
+                      <div className="space-y-1.5 pt-1">
+                        <label htmlFor="slot-open-mode" className="text-xs font-medium text-slate-300">
+                          After Saving Clip (This Button)
+                        </label>
+                        <select
+                          id="slot-open-mode"
+                          value={selectedSlot.openAfterSaveMode}
+                          onChange={(e) =>
+                            updateSelectedSlot({ openAfterSaveMode: e.target.value as OpenAfterSaveMode })
+                          }
+                          className="w-full bg-[#131924] border border-slate-700 focus:border-blue-500 rounded-lg px-3 py-2 text-xs text-slate-100 outline-none"
+                        >
+                          <option value="global">
+                            Follow Global Setting ({settings.openAfterSave ? 'Currently On' : 'Currently Off'})
+                          </option>
+                          <option value="open">Always open clip on this button</option>
+                          <option value="never">Never open clip on this button</option>
+                        </select>
+                        <p className="text-xs text-slate-500">
+                          Saved independently on this key so you can mix silent-save and instant-review buttons.
+                        </p>
+                      </div>
                     )}
 
                     {(selectedSlot.actionType === StreamDeckActionType.DYNAMIC_INCREASE ||
@@ -937,8 +1119,149 @@ export function StreamDeckEmulator({
                         </p>
                       </div>
                     )}
+
+                    {/* Collapsible Custom Text Size & Key Background Menu */}
+                    <div className="border border-slate-800 rounded-lg bg-[#0E131D] overflow-hidden mt-2">
+                      <button
+                        type="button"
+                        onClick={toggleAppearanceMenu}
+                        aria-expanded={appearanceMenuOpen}
+                        className="w-full flex items-center justify-between px-3.5 py-2.5 text-left bg-[#131924] hover:bg-[#172030] transition-colors cursor-pointer"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <span className="text-xs font-semibold text-slate-200">
+                            Custom Text Size &amp; Key Background
+                          </span>
+                          {selectedSlot.fontSizeBoost > 0 && (
+                            <span className="text-xs font-mono tabular-nums text-blue-400">
+                              +{selectedSlot.fontSizeBoost}pt ({selectedSlot.titleFontSize + selectedSlot.fontSizeBoost}pt)
+                            </span>
+                          )}
+                        </div>
+                        <ChevronRight
+                          className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-150 ${
+                            appearanceMenuOpen ? 'rotate-90' : ''
+                          }`}
+                        />
+                      </button>
+
+                      {appearanceMenuOpen && (
+                        <div className="p-3.5 border-t border-slate-800 space-y-3.5">
+                          <div className="space-y-1.5">
+                            <label htmlFor="slot-font-boost" className="text-xs font-medium text-slate-300">
+                              Font Size Boost (+pt above Stream Deck size)
+                            </label>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  updateSelectedSlot({
+                                    fontSizeBoost: Math.max(0, (selectedSlot.fontSizeBoost || 0) - 1),
+                                  })
+                                }
+                                className="px-2.5 py-1.5 text-xs font-mono font-medium text-slate-200 bg-[#131924] hover:bg-slate-800 border border-slate-700 rounded-md cursor-pointer"
+                              >
+                                -1
+                              </button>
+                              <input
+                                id="slot-font-boost"
+                                type="number"
+                                min={0}
+                                max={56}
+                                step={1}
+                                value={selectedSlot.fontSizeBoost}
+                                onChange={(e) =>
+                                  updateSelectedSlot({
+                                    fontSizeBoost: Math.min(56, Math.max(0, Math.round(Number(e.target.value) || 0))),
+                                  })
+                                }
+                                className="flex-1 min-w-0 bg-[#131924] border border-slate-700 focus:border-blue-500 rounded-md px-2.5 py-1.5 text-xs font-mono tabular-nums text-slate-100 outline-none"
+                              />
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  updateSelectedSlot({
+                                    fontSizeBoost: Math.min(56, (selectedSlot.fontSizeBoost || 0) + 1),
+                                  })
+                                }
+                                className="px-2.5 py-1.5 text-xs font-mono font-medium text-slate-200 bg-[#131924] hover:bg-slate-800 border border-slate-700 rounded-md cursor-pointer"
+                              >
+                                +1
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => updateSelectedSlot({ fontSizeBoost: 0 })}
+                                className="px-2.5 py-1.5 text-xs font-medium text-slate-300 bg-[#131924] hover:bg-slate-800 border border-slate-700 rounded-md cursor-pointer whitespace-nowrap"
+                              >
+                                Reset (0)
+                              </button>
+                            </div>
+                            <p className="text-xs text-slate-500 leading-relaxed">
+                              {selectedSlot.fontSizeBoost > 0
+                                ? `Boost +${selectedSlot.fontSizeBoost}pt (${selectedSlot.titleFontSize} → ${selectedSlot.titleFontSize + selectedSlot.fontSizeBoost}pt) using Stream Deck's selected Font & Color. Leave Title Text blank so text doesn't double up.`
+                                : '0 (Off) — Uses Stream Deck’s native text size & icon layer.'}
+                            </p>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label htmlFor="slot-bg-img" className="text-xs font-medium text-slate-300">
+                              Key Background Image (Optional — .png / .jpg)
+                            </label>
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                id="slot-bg-img"
+                                type="text"
+                                value={selectedSlot.bgImagePath}
+                                onChange={(e) => updateSelectedSlot({ bgImagePath: e.target.value })}
+                                placeholder="Optional PNG/JPG behind boosted text"
+                                className="flex-1 min-w-0 bg-[#131924] border border-slate-700 focus:border-blue-500 rounded-md px-2.5 py-1.5 text-xs font-mono text-slate-100 outline-none"
+                              />
+                              <label className="px-2.5 py-1.5 text-xs font-medium text-slate-200 bg-[#131924] hover:bg-slate-800 border border-slate-700 rounded-md cursor-pointer whitespace-nowrap">
+                                <span>Browse</span>
+                                <input
+                                  type="file"
+                                  accept="image/png,image/jpeg,image/webp,image/bmp,image/svg+xml"
+                                  className="hidden"
+                                  onChange={(e) => handleUploadSlotBgPreview(e.target.files?.[0] ?? null)}
+                                />
+                              </label>
+                              {(selectedSlot.bgImagePath || selectedSlot.bgImagePreviewUrl) && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (selectedSlot.bgImagePreviewUrl) {
+                                      URL.revokeObjectURL(selectedSlot.bgImagePreviewUrl);
+                                    }
+                                    updateSelectedSlot({ bgImagePath: '', bgImagePreviewUrl: null });
+                                  }}
+                                  className="px-2.5 py-1.5 text-xs font-medium text-slate-300 bg-[#131924] hover:bg-slate-800 border border-slate-700 rounded-md cursor-pointer"
+                                >
+                                  Clear
+                                </button>
+                              )}
+                            </div>
+                            <p className="text-xs text-slate-500">
+                              Composites your PNG/JPG directly behind giant boosted timers or symbols.
+                            </p>
+                          </div>
+
+                          <div className="space-y-1">
+                            <label htmlFor="slot-boost-text" className="text-xs font-medium text-slate-300">
+                              Boosted Text Override (Optional)
+                            </label>
+                            <input
+                              id="slot-boost-text"
+                              type="text"
+                              value={selectedSlot.customBoostText}
+                              onChange={(e) => updateSelectedSlot({ customBoostText: e.target.value })}
+                              placeholder="Leave blank for automatic timer / + / -"
+                              className="w-full bg-[#131924] border border-slate-700 focus:border-blue-500 rounded-md px-2.5 py-1.5 text-xs text-slate-100 outline-none"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                )}
               </>
             )}
           </div>

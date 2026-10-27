@@ -1,7 +1,7 @@
 import { GeneratedPluginFile, GlobalPluginSettings } from '../types/plugin';
 
 export const PLUGIN_UUID = 'com.antvenom.replayslice';
-export const PLUGIN_VERSION = '1.0.2';
+export const PLUGIN_VERSION = '1.0.3';
 export const SD_PLUGIN_FOLDER = `${PLUGIN_UUID}.sdPlugin`;
 
 export function generateManifestJson(): string {
@@ -67,26 +67,28 @@ export function generateManifestJson(): string {
       {
         UUID: `${PLUGIN_UUID}.dynamicincrease`,
         Name: 'Dynamic Increase',
-        Tooltip: 'Increase Dynamic Length by a step duration configured on this button',
+        Tooltip: 'Increase Dynamic Length by a step duration configured on this button (hold to repeat)',
         Icon: 'imgs/action-plus',
         Controllers: ['Keypad'],
         States: [
           {
             Image: 'imgs/key-default',
             TitleAlignment: 'middle',
+            FontSize: '16',
           },
         ],
       },
       {
         UUID: `${PLUGIN_UUID}.dynamicdecrease`,
         Name: 'Dynamic Decrease',
-        Tooltip: 'Decrease Dynamic Length by a step duration configured on this button',
+        Tooltip: 'Decrease Dynamic Length by a step duration configured on this button (hold to repeat)',
         Icon: 'imgs/action-minus',
         Controllers: ['Keypad'],
         States: [
           {
             Image: 'imgs/key-default',
             TitleAlignment: 'middle',
+            FontSize: '16',
           },
         ],
       },
@@ -138,15 +140,25 @@ export function generateManifestJson(): string {
 export function generatePluginNodeBackend(defaults: GlobalPluginSettings): string {
   const serializedDefaults = JSON.stringify(
     {
+      openAfterSave: defaults.openAfterSave ?? false,
+      deleteOriginal: defaults.deleteOriginal ?? true,
       masterHotkey: defaults.masterHotkey || 'Alt+F10',
       mainCapturesDir: defaults.mainCapturesDir || '',
       outputDir: defaults.outputDir || '',
-      deleteOriginal: defaults.deleteOriginal ?? true,
       ffmpegPath: defaults.ffmpegPath || '',
       successSoundPath: defaults.successSoundPath || '',
       errorSoundPath: defaults.errorSoundPath || '',
+      repeatDelaySeconds: Number.isFinite(defaults.repeatDelaySeconds) ? defaults.repeatDelaySeconds : 0.5,
+      repeatRateHz: Number.isFinite(defaults.repeatRateHz) ? defaults.repeatRateHz : 5,
       dynamicCurrentSeconds: 60,
       enableDebugLog: false,
+      uiMenuOpen: {
+        appearance: false,
+        dirs: true,
+        sounds: true,
+        repeat: false,
+        diagnostics: false,
+      },
     },
     null,
     2
@@ -873,7 +885,9 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '  if (process.platform === "win32") {',
     '    const filterStr = filterKind === "audio"',
     '      ? "Audio Files (*.wav;*.mp3;*.ogg;*.m4a)|*.wav;*.mp3;*.ogg;*.m4a|All Files (*.*)|*.*"',
-    '      : "Executable Files (*.exe)|*.exe|All Files (*.*)|*.*";',
+    '      : filterKind === "image"',
+    '        ? "Image Files (*.png;*.jpg;*.jpeg;*.webp;*.bmp;*.svg)|*.png;*.jpg;*.jpeg;*.webp;*.bmp;*.svg|All Files (*.*)|*.*"',
+    '        : "Executable Files (*.exe)|*.exe|All Files (*.*)|*.*";',
     '    const ps = [',
     '      "Add-Type -AssemblyName System.Windows.Forms;",',
     '      "$d = New-Object System.Windows.Forms.OpenFileDialog;",',
@@ -912,7 +926,19 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '  process.exit(1);',
     '}',
     '',
-    'const visibleContexts = new Map(); // context -> { action, settings }',
+    'const DEFAULT_TITLE_PARAMS = {',
+    '  fontFamily: "",',
+    '  fontSize: 16,',
+    '  fontStyle: "Bold",',
+    '  fontUnderline: false,',
+    '  showTitle: true,',
+    '  titleAlignment: "middle",',
+    '  titleColor: "#FFFFFF",',
+    '};',
+    '',
+    'const visibleContexts = new Map(); // context -> { action, settings, userTitle, titleParams, hasCustomImage, lastSentImage, lastSentTitle }',
+    'const activeHoldTimers = new Map(); // context -> { delayTimer, intervalTimer, ticked }',
+    'const bgImageCache = new Map(); // resolvedPath -> { mtimeMs, size, dataUri }',
     'let lastCaptureTriggerAt = 0;',
     'let captureInFlight = false;',
     '',
@@ -925,22 +951,284 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '  },',
     '  (msg) => handleStreamDeckMessage(msg),',
     '  () => {',
+    '    for (const ctx of activeHoldTimers.keys()) stopHoldRepeat(ctx, false);',
     '    writeLog("INFO", "Stream Deck socket closed. Exiting.");',
     '    process.exit(0);',
     '  }',
     ');',
     '',
+    'function escapeXml(str) {',
+    '  return String(str)',
+    '    .replace(/&/g, "&amp;")',
+    '    .replace(/</g, "&lt;")',
+    '    .replace(/>/g, "&gt;")',
+    '    .replace(/"/g, "&quot;")',
+    '    .replace(/\'/g, "&apos;");',
+    '}',
+    '',
+    'function loadBackgroundImageDataUri(rawPath) {',
+    '  const cleanPath = String(rawPath || "").trim().replace(/^"(.*)"$/, "$1");',
+    '  if (!cleanPath || !fs.existsSync(cleanPath)) return "";',
+    '  try {',
+    '    const resolved = path.resolve(cleanPath);',
+    '    const st = fs.statSync(resolved);',
+    '    if (!st.isFile() || st.size <= 0) return "";',
+    '    const cached = bgImageCache.get(resolved);',
+    '    if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) {',
+    '      return cached.dataUri;',
+    '    }',
+    '    const ext = path.extname(resolved).toLowerCase();',
+    '    const mime = ext === ".jpg" || ext === ".jpeg"',
+    '      ? "image/jpeg"',
+    '      : ext === ".webp"',
+    '        ? "image/webp"',
+    '        : ext === ".bmp"',
+    '          ? "image/bmp"',
+    '          : ext === ".gif"',
+    '            ? "image/gif"',
+    '            : ext === ".svg"',
+    '              ? "image/svg+xml"',
+    '              : "image/png";',
+    '    const buf = fs.readFileSync(resolved);',
+    '    const dataUri = `data:${mime};base64,${buf.toString("base64")}`;',
+    '    if (bgImageCache.size >= 32) {',
+    '      const oldestKey = bgImageCache.keys().next().value;',
+    '      if (oldestKey) bgImageCache.delete(oldestKey);',
+    '    }',
+    '    bgImageCache.set(resolved, { mtimeMs: st.mtimeMs, size: st.size, dataUri });',
+    '    return dataUri;',
+    '  } catch (err) {',
+    '    writeLog("WARN", "Failed to load key background image", err.message);',
+    '    return "";',
+    '  }',
+    '}',
+    '',
+    'function resolveBoostedDisplayText(action, meta, btnSettings) {',
+    '  const override = String(btnSettings.customBoostText || "");',
+    '  if (override.trim().length > 0) {',
+    '    return override.replace(/\\\\n/g, "\\n");',
+    '  }',
+    '  if (action === ACTION_DYNAMIC) {',
+    '    return formatDynamicTitle(globalSettings.dynamicCurrentSeconds ?? 60);',
+    '  }',
+    '  const typedTitle = String(meta.userTitle || "");',
+    '  if (typedTitle.trim().length > 0) {',
+    '    return typedTitle;',
+    '  }',
+    '  if (action === ACTION_INCREASE) return "+";',
+    '  if (action === ACTION_DECREASE) return "-";',
+    '  if (action === ACTION_FIXED) {',
+    '    const sec = Math.max(1, parseTimecodeToSeconds(btnSettings.fixedDuration || "00:30", 30));',
+    '    return formatDynamicTitle(sec);',
+    '  }',
+    '  if (action === ACTION_RESET) {',
+    '    const sec = Math.max(1, parseTimecodeToSeconds(btnSettings.resetDuration || "00:30", 30));',
+    '    return formatDynamicTitle(sec);',
+    '  }',
+    '  return "";',
+    '}',
+    '',
+    'function buildKeySvg({ bgDataUri, text, titleParams, effectiveSize }) {',
+    '  const tp = titleParams || DEFAULT_TITLE_PARAMS;',
+    '  const rawFamily = String(tp.fontFamily || "").trim();',
+    '  const family = rawFamily || (process.platform === "darwin" ? "Helvetica Neue, Arial, sans-serif" : "Arial, Segoe UI, sans-serif");',
+    '  const styleStr = String(tp.fontStyle || "");',
+    '  const isBold = styleStr === "" || styleStr.toLowerCase().includes("bold");',
+    '  const isItalic = styleStr.toLowerCase().includes("italic");',
+    '  const weightAttr = isBold ? "bold" : "normal";',
+    '  const styleAttr = isItalic ? "italic" : "normal";',
+    '  const underlineAttr = tp.fontUnderline ? \' text-decoration="underline"\' : "";',
+    '  const fill = escapeXml(String(tp.titleColor || "#FFFFFF").trim() || "#FFFFFF");',
+    '  const familyAttr = escapeXml(family);',
+    '',
+    '  const bgLayer = bgDataUri',
+    '    ? `<rect x="0" y="0" width="72" height="72" fill="#141820"/><image x="0" y="0" width="72" height="72" preserveAspectRatio="xMidYMid slice" href="${bgDataUri}" xlink:href="${bgDataUri}"/>`',
+    '    : \'<rect x="0" y="0" width="72" height="72" fill="#141820"/>\';',
+    '',
+    '  if (!text || String(text).length === 0) {',
+    '    return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="144" height="144" viewBox="0 0 72 72">${bgLayer}</svg>`;',
+    '  }',
+    '',
+    '  const linesArr = String(text).split(/\\r?\\n/);',
+    '  const size = Math.max(6, Math.min(72, Number(effectiveSize) || 16));',
+    '  const lineHeight = size * 1.12;',
+    '  const align = String(tp.titleAlignment || "middle").toLowerCase();',
+    '',
+    '  let startY;',
+    '  if (align === "top") {',
+    '    startY = Math.max(size * 0.82, 6 + size * 0.75);',
+    '  } else if (align === "bottom") {',
+    '    startY = 66 - (linesArr.length - 1) * lineHeight;',
+    '  } else {',
+    '    startY = 36 + size * 0.35 - ((linesArr.length - 1) * lineHeight) / 2;',
+    '  }',
+    '',
+    '  const textNodes = linesArr.map((line, idx) => {',
+    '    const y = (startY + idx * lineHeight).toFixed(2);',
+    '    return `<text x="36" y="${y}" text-anchor="middle" font-family="${familyAttr}" font-size="${size.toFixed(1)}" font-weight="${weightAttr}" font-style="${styleAttr}"${underlineAttr} fill="${fill}">${escapeXml(line)}</text>`;',
+    '  }).join("");',
+    '',
+    '  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="144" height="144" viewBox="0 0 72 72">${bgLayer}${textNodes}</svg>`;',
+    '}',
+    '',
+    'function renderKeyVisual(context) {',
+    '  const meta = visibleContexts.get(context);',
+    '  if (!meta) return;',
+    '  const btnSettings = meta.settings || {};',
+    '  const titleParams = meta.titleParams || DEFAULT_TITLE_PARAMS;',
+    '  const userTitle = String(meta.userTitle || "");',
+    '  const rawBoost = Number(btnSettings.fontSizeBoost);',
+    '  const boost = Number.isFinite(rawBoost) && rawBoost > 0 ? Math.min(56, Math.round(rawBoost)) : 0;',
+    '  const bgDataUri = btnSettings.bgImagePath ? loadBackgroundImageDataUri(btnSettings.bgImagePath) : "";',
+    '',
+    '  if (boost <= 0 && !bgDataUri) {',
+    '    if (meta.hasCustomImage) {',
+    '      sd.sendJSON({ event: "setImage", context, payload: { target: 0 } });',
+    '      meta.hasCustomImage = false;',
+    '      meta.lastSentImage = "";',
+    '    }',
+    '    if (meta.lastSentTitle === "") {',
+    '      sd.sendJSON({ event: "setTitle", context, payload: { target: 0 } });',
+    '      meta.lastSentTitle = null;',
+    '    }',
+    '    if (meta.action === ACTION_DYNAMIC) {',
+    '      const dynText = formatDynamicTitle(globalSettings.dynamicCurrentSeconds ?? 60);',
+    '      if (meta.lastSentTitle !== dynText) {',
+    '        sd.sendJSON({ event: "setTitle", context, payload: { title: dynText, target: 0 } });',
+    '        meta.lastSentTitle = dynText;',
+    '      }',
+    '    } else if (meta.action === ACTION_INCREASE || meta.action === ACTION_DECREASE) {',
+    '      const sym = meta.action === ACTION_INCREASE ? "+" : "-";',
+    '      if (!userTitle && meta.lastSentTitle !== sym) {',
+    '        sd.sendJSON({ event: "setTitle", context, payload: { title: sym, target: 0 } });',
+    '        meta.lastSentTitle = sym;',
+    '      }',
+    '    }',
+    '    return;',
+    '  }',
+    '',
+    '  if (boost <= 0 && bgDataUri) {',
+    '    const svg = buildKeySvg({ bgDataUri, text: "", titleParams, effectiveSize: 16 });',
+    '    const svgUri = "data:image/svg+xml;base64," + Buffer.from(svg, "utf8").toString("base64");',
+    '    if (meta.lastSentImage !== svgUri) {',
+    '      sd.sendJSON({ event: "setImage", context, payload: { image: svgUri, target: 0 } });',
+    '      meta.lastSentImage = svgUri;',
+    '      meta.hasCustomImage = true;',
+    '    }',
+    '    if (meta.lastSentTitle === "") {',
+    '      sd.sendJSON({ event: "setTitle", context, payload: { target: 0 } });',
+    '      meta.lastSentTitle = null;',
+    '    }',
+    '    if (meta.action === ACTION_DYNAMIC) {',
+    '      const dynText = formatDynamicTitle(globalSettings.dynamicCurrentSeconds ?? 60);',
+    '      if (meta.lastSentTitle !== dynText) {',
+    '        sd.sendJSON({ event: "setTitle", context, payload: { title: dynText, target: 0 } });',
+    '        meta.lastSentTitle = dynText;',
+    '      }',
+    '    } else if (meta.action === ACTION_INCREASE || meta.action === ACTION_DECREASE) {',
+    '      const sym = meta.action === ACTION_INCREASE ? "+" : "-";',
+    '      if (!userTitle && meta.lastSentTitle !== sym) {',
+    '        sd.sendJSON({ event: "setTitle", context, payload: { title: sym, target: 0 } });',
+    '        meta.lastSentTitle = sym;',
+    '      }',
+    '    }',
+    '    return;',
+    '  }',
+    '',
+    '  // Boost > 0: clear plugin-driven native title so text never doubles up, then render boosted SVG text + optional PNG background',
+    '  if (meta.lastSentTitle !== "") {',
+    '    sd.sendJSON({ event: "setTitle", context, payload: { title: "", target: 0 } });',
+    '    meta.lastSentTitle = "";',
+    '  }',
+    '',
+    '  const baseSize = Number(titleParams.fontSize) > 0 ? Number(titleParams.fontSize) : 16;',
+    '  const effectiveSize = Math.min(72, baseSize + boost);',
+    '  const displayText = resolveBoostedDisplayText(meta.action, meta, btnSettings);',
+    '  const svg = buildKeySvg({ bgDataUri, text: displayText, titleParams, effectiveSize });',
+    '  const svgUri = "data:image/svg+xml;base64," + Buffer.from(svg, "utf8").toString("base64");',
+    '  if (meta.lastSentImage !== svgUri) {',
+    '    sd.sendJSON({ event: "setImage", context, payload: { image: svgUri, target: 0 } });',
+    '    meta.lastSentImage = svgUri;',
+    '    meta.hasCustomImage = true;',
+    '  }',
+    '}',
+    '',
     'function refreshAllDynamicButtons() {',
-    '  const title = formatDynamicTitle(globalSettings.dynamicCurrentSeconds ?? 60);',
     '  for (const [context, meta] of visibleContexts.entries()) {',
     '    if (meta.action === ACTION_DYNAMIC) {',
-    '      sd.sendJSON({',
-    '        event: "setTitle",',
-    '        context,',
-    '        payload: { title, target: 0 },',
-    '      });',
+    '      renderKeyVisual(context);',
     '    }',
     '  }',
+    '}',
+    '',
+
+    'function resolveShouldOpenAfterSave(btnSettings) {',
+    '  const mode = btnSettings && btnSettings.openAfterSaveMode;',
+    '  if (mode === "open") return true;',
+    '  if (mode === "never") return false;',
+    '  if (!mode && btnSettings && btnSettings.openAfterSave === true) return true;',
+    '  return Boolean(globalSettings.openAfterSave);',
+    '}',
+    '',
+    'function applyDynamicStepOnce(action, context, incomingSettings, persistNow) {',
+    '  const cached = (visibleContexts.get(context) || {}).settings || {};',
+    '  const btnSettings = { ...cached, ...(incomingSettings || {}) };',
+    '  const step = Math.max(1, parseTimecodeToSeconds(btnSettings.stepDuration || "00:30", 30));',
+    '  const current = Number(globalSettings.dynamicCurrentSeconds) || 60;',
+    '',
+    '  if (action === ACTION_INCREASE) {',
+    '    globalSettings.dynamicCurrentSeconds = Math.max(1, current + step);',
+    '  } else if (action === ACTION_DECREASE) {',
+    '    const autoFloor = Math.max(1, Math.min(30, step));',
+    '    const rawFloor = (btnSettings.minFloor || "").trim();',
+    '    const floorSec = rawFloor ? Math.max(1, parseTimecodeToSeconds(rawFloor, autoFloor)) : autoFloor;',
+    '    const clamped = Math.max(floorSec, current - step);',
+    '    globalSettings.dynamicCurrentSeconds = Math.max(1, Math.min(current, clamped));',
+    '  }',
+    '',
+    '  refreshAllDynamicButtons();',
+    '  if (persistNow) saveGlobalSettings();',
+    '}',
+    '',
+    'function stopHoldRepeat(context, persistIfTicked = true) {',
+    '  const entry = activeHoldTimers.get(context);',
+    '  if (!entry) return;',
+    '  if (entry.delayTimer) clearTimeout(entry.delayTimer);',
+    '  if (entry.intervalTimer) clearInterval(entry.intervalTimer);',
+    '  activeHoldTimers.delete(context);',
+    '  if (persistIfTicked && entry.ticked) {',
+    '    saveGlobalSettings();',
+    '  }',
+    '}',
+    '',
+    'function startHoldRepeat(action, context, incomingSettings) {',
+    '  stopHoldRepeat(context, false);',
+    '  applyDynamicStepOnce(action, context, incomingSettings, true);',
+    '',
+    '  const rawDelay = Number(globalSettings.repeatDelaySeconds);',
+    '  const delaySec = Number.isFinite(rawDelay) && rawDelay >= 0.05 ? Math.min(10, rawDelay) : 0.5;',
+    '  const rawRate = Number(globalSettings.repeatRateHz);',
+    '  const rateHz = Number.isFinite(rawRate) && rawRate >= 0.5 ? Math.min(30, rawRate) : 5;',
+    '  const delayMs = Math.round(delaySec * 1000);',
+    '  const intervalMs = Math.max(33, Math.round(1000 / rateHz));',
+    '',
+    '  const timerRecord = { delayTimer: null, intervalTimer: null, ticked: false };',
+    '  timerRecord.delayTimer = setTimeout(() => {',
+    '    timerRecord.delayTimer = null;',
+    '    if (!activeHoldTimers.has(context)) return;',
+    '    timerRecord.ticked = true;',
+    '    applyDynamicStepOnce(action, context, null, false);',
+    '    timerRecord.intervalTimer = setInterval(() => {',
+    '      if (!activeHoldTimers.has(context)) {',
+    '        stopHoldRepeat(context, false);',
+    '        return;',
+    '      }',
+    '      timerRecord.ticked = true;',
+    '      applyDynamicStepOnce(action, context, null, false);',
+    '    }, intervalMs);',
+    '  }, delayMs);',
+    '',
+    '  activeHoldTimers.set(context, timerRecord);',
     '}',
     '',
     'function saveGlobalSettings() {',
@@ -1167,7 +1455,15 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '    saveGlobalSettings();',
     '    refreshAllDynamicButtons();',
     '  } else if (payload.cmd === "syncActionSettings" && payload.actionContext && payload.settings) {',
-    '    const existing = visibleContexts.get(payload.actionContext) || { action, settings: {} };',
+    '    const existing = visibleContexts.get(payload.actionContext) || {',
+    '      action,',
+    '      settings: {},',
+    '      userTitle: "",',
+    '      titleParams: { ...DEFAULT_TITLE_PARAMS },',
+    '      hasCustomImage: false,',
+    '      lastSentImage: "",',
+    '      lastSentTitle: null,',
+    '    };',
     '    existing.settings = { ...existing.settings, ...payload.settings };',
     '    visibleContexts.set(payload.actionContext, existing);',
     '    sd.sendJSON({',
@@ -1175,6 +1471,7 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '      context: payload.actionContext,',
     '      payload: existing.settings,',
     '    });',
+    '    renderKeyVisual(payload.actionContext);',
     '    writeLog("INFO", "Synced per-button settings", { actionContext: payload.actionContext, settings: existing.settings });',
     '  }',
     '}',
@@ -1184,9 +1481,12 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '',
     '  if (event === "didReceiveGlobalSettings") {',
     '    const incoming = (payload && payload.settings) || {};',
-    '    // First launch: seed defaults into Stream Deck global store if empty',
     '    const isFirstSeed = Object.keys(incoming).length === 0;',
+    '    const liveDynamicWhileHeld = activeHoldTimers.size > 0 ? globalSettings.dynamicCurrentSeconds : null;',
     '    globalSettings = { ...DEFAULT_GLOBAL_SETTINGS, ...incoming };',
+    '    if (liveDynamicWhileHeld !== null) {',
+    '      globalSettings.dynamicCurrentSeconds = liveDynamicWhileHeld;',
+    '    }',
     '    if (!Number.isFinite(globalSettings.dynamicCurrentSeconds) || globalSettings.dynamicCurrentSeconds <= 0) {',
     '      globalSettings.dynamicCurrentSeconds = 60;',
     '    }',
@@ -1196,26 +1496,72 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '  }',
     '',
     '  if (event === "willAppear") {',
-    '    visibleContexts.set(context, { action, settings: (payload && payload.settings) || {} });',
-    '    if (action === ACTION_DYNAMIC) {',
-    '      sd.sendJSON({',
-    '        event: "setTitle",',
-    '        context,',
-    '        payload: { title: formatDynamicTitle(globalSettings.dynamicCurrentSeconds ?? 60), target: 0 },',
-    '      });',
+    '    const existing = visibleContexts.get(context) || {',
+    '      action,',
+    '      settings: {},',
+    '      userTitle: "",',
+    '      titleParams: { ...DEFAULT_TITLE_PARAMS },',
+    '      hasCustomImage: false,',
+    '      lastSentImage: "",',
+    '      lastSentTitle: null,',
+    '    };',
+    '    existing.action = action;',
+    '    existing.settings = (payload && payload.settings) || existing.settings || {};',
+    '    visibleContexts.set(context, existing);',
+    '    renderKeyVisual(context);',
+    '    return;',
+    '  }',
+    '',
+    '  if (event === "titleParametersDidChange") {',
+    '    const existing = visibleContexts.get(context) || {',
+    '      action,',
+    '      settings: {},',
+    '      userTitle: "",',
+    '      titleParams: { ...DEFAULT_TITLE_PARAMS },',
+    '      hasCustomImage: false,',
+    '      lastSentImage: "",',
+    '      lastSentTitle: null,',
+    '    };',
+    '    existing.action = action || existing.action;',
+    '    if (payload && payload.settings) {',
+    '      existing.settings = { ...existing.settings, ...payload.settings };',
     '    }',
+    '    const incomingTitle = (payload && typeof payload.title === "string") ? payload.title : "";',
+    '    existing.userTitle = (existing.lastSentTitle !== null && incomingTitle === existing.lastSentTitle) ? "" : incomingTitle;',
+    '    if (payload && payload.titleParameters) {',
+    '      existing.titleParams = { ...DEFAULT_TITLE_PARAMS, ...payload.titleParameters };',
+    '    }',
+    '    visibleContexts.set(context, existing);',
+    '    renderKeyVisual(context);',
     '    return;',
     '  }',
     '',
     '  if (event === "willDisappear") {',
+    '    stopHoldRepeat(context, true);',
     '    visibleContexts.delete(context);',
     '    return;',
     '  }',
     '',
+    '  if (event === "keyUp") {',
+    '    if (action === ACTION_INCREASE || action === ACTION_DECREASE) {',
+    '      stopHoldRepeat(context, true);',
+    '    }',
+    '    return;',
+    '  }',
+    '',
     '  if (event === "didReceiveSettings") {',
-    '    const existing = visibleContexts.get(context) || { action, settings: {} };',
+    '    const existing = visibleContexts.get(context) || {',
+    '      action,',
+    '      settings: {},',
+    '      userTitle: "",',
+    '      titleParams: { ...DEFAULT_TITLE_PARAMS },',
+    '      hasCustomImage: false,',
+    '      lastSentImage: "",',
+    '      lastSentTitle: null,',
+    '    };',
     '    existing.settings = (payload && payload.settings) || {};',
     '    visibleContexts.set(context, existing);',
+    '    renderKeyVisual(context);',
     '    return;',
     '  }',
     '',
@@ -1230,7 +1576,7 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '      const incoming = (payload && payload.settings) || {};',
     '      const btnSettings = { ...cached, ...incoming };',
     '      const fixedSec = Math.max(1, parseTimecodeToSeconds(btnSettings.fixedDuration || "00:30", 30));',
-    '      const openAfterSave = Boolean(btnSettings.openAfterSave);',
+    '      const openAfterSave = resolveShouldOpenAfterSave(btnSettings);',
     '      writeLog("INFO", "Fixed Length button pressed", { context, fixedSec, openAfterSave });',
     '      executeCaptureFlow(context, fixedSec, openAfterSave);',
     '    } else if (action === ACTION_DYNAMIC) {',
@@ -1238,32 +1584,11 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '      const incoming = (payload && payload.settings) || {};',
     '      const btnSettings = { ...cached, ...incoming };',
     '      const dynSec = Math.max(1, Number(globalSettings.dynamicCurrentSeconds) || 60);',
-    '      const openAfterSave = Boolean(btnSettings.openAfterSave);',
+    '      const openAfterSave = resolveShouldOpenAfterSave(btnSettings);',
     '      writeLog("INFO", "Dynamic Length button pressed", { context, dynSec, openAfterSave });',
     '      executeCaptureFlow(context, dynSec, openAfterSave);',
-    '    } else if (action === ACTION_INCREASE) {',
-    '      const cached = (visibleContexts.get(context) || {}).settings || {};',
-    '      const incoming = (payload && payload.settings) || {};',
-    '      const btnSettings = { ...cached, ...incoming };',
-    '      const step = Math.max(1, parseTimecodeToSeconds(btnSettings.stepDuration || "00:30", 30));',
-    '      globalSettings.dynamicCurrentSeconds = Math.max(1, (Number(globalSettings.dynamicCurrentSeconds) || 60) + step);',
-    '      writeLog("INFO", "Dynamic Increase button pressed", { context, step, next: globalSettings.dynamicCurrentSeconds });',
-    '      saveGlobalSettings();',
-    '      refreshAllDynamicButtons();',
-    '    } else if (action === ACTION_DECREASE) {',
-    '      const cached = (visibleContexts.get(context) || {}).settings || {};',
-    '      const incoming = (payload && payload.settings) || {};',
-    '      const btnSettings = { ...cached, ...incoming };',
-    '      const step = Math.max(1, parseTimecodeToSeconds(btnSettings.stepDuration || "00:30", 30));',
-    '      const autoFloor = Math.max(1, Math.min(30, step));',
-    '      const rawFloor = (btnSettings.minFloor || "").trim();',
-    '      const floorSec = rawFloor ? Math.max(1, parseTimecodeToSeconds(rawFloor, autoFloor)) : autoFloor;',
-    '      const current = Number(globalSettings.dynamicCurrentSeconds) || 60;',
-    '      const clamped = Math.max(floorSec, current - step);',
-    '      globalSettings.dynamicCurrentSeconds = Math.max(1, Math.min(current, clamped));',
-    '      writeLog("INFO", "Dynamic Decrease button pressed", { context, step, floorSec, next: globalSettings.dynamicCurrentSeconds });',
-    '      saveGlobalSettings();',
-    '      refreshAllDynamicButtons();',
+    '    } else if (action === ACTION_INCREASE || action === ACTION_DECREASE) {',
+    '      startHoldRepeat(action, context, payload && payload.settings);',
     '    } else if (action === ACTION_RESET) {',
     '      const cached = (visibleContexts.get(context) || {}).settings || {};',
     '      const incoming = (payload && payload.settings) || {};',
@@ -1288,14 +1613,24 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
 
 export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): string {
   const serializedDefaults = JSON.stringify({
+    openAfterSave: defaults.openAfterSave ?? false,
+    deleteOriginal: defaults.deleteOriginal ?? true,
     masterHotkey: defaults.masterHotkey || 'Alt+F10',
     mainCapturesDir: defaults.mainCapturesDir || '',
     outputDir: defaults.outputDir || '',
-    deleteOriginal: defaults.deleteOriginal ?? true,
     ffmpegPath: defaults.ffmpegPath || '',
     successSoundPath: defaults.successSoundPath || '',
     errorSoundPath: defaults.errorSoundPath || '',
+    repeatDelaySeconds: Number.isFinite(defaults.repeatDelaySeconds) ? defaults.repeatDelaySeconds : 0.5,
+    repeatRateHz: Number.isFinite(defaults.repeatRateHz) ? defaults.repeatRateHz : 5,
     enableDebugLog: false,
+    uiMenuOpen: {
+      appearance: false,
+      dirs: true,
+      sounds: true,
+      repeat: false,
+      diagnostics: false,
+    },
   });
 
   return `<!DOCTYPE html>
@@ -1329,6 +1664,7 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       gap: 4px;
       margin-bottom: 10px;
     }
+    .row:last-child { margin-bottom: 2px; }
     .row label {
       color: #BDBDBD;
       font-weight: 500;
@@ -1338,7 +1674,7 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       gap: 6px;
       align-items: center;
     }
-    input[type="text"] {
+    input[type="text"], input[type="number"], select {
       flex: 1;
       width: 100%;
       background: #3B3B3B;
@@ -1349,7 +1685,7 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       font-size: 12px;
       outline: none;
     }
-    input[type="text"]:focus {
+    input[type="text"]:focus, input[type="number"]:focus, select:focus {
       border-color: #3B82F6;
     }
     button {
@@ -1367,7 +1703,7 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       display: flex;
       align-items: center;
       gap: 8px;
-      margin: 10px 0;
+      margin: 8px 0;
       cursor: pointer;
     }
     .hint {
@@ -1377,6 +1713,43 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
     .status-ok { color: #4ADE80; }
     .status-err { color: #F87171; }
     .hidden { display: none !important; }
+    details.menu-group {
+      margin-top: 10px;
+      border: 1px solid #3D3D3D;
+      border-radius: 5px;
+      background: #272727;
+      overflow: hidden;
+    }
+    details.menu-group > summary {
+      cursor: pointer;
+      padding: 7px 10px;
+      font-size: 11px;
+      font-weight: 600;
+      color: #CFCFCF;
+      background: #333333;
+      user-select: none;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    details.menu-group > summary::-webkit-details-marker { display: none; }
+    details.menu-group > summary::after {
+      content: "▸";
+      font-size: 11px;
+      color: #9A9A9A;
+      transition: transform 0.12s ease;
+    }
+    details.menu-group[open] > summary::after {
+      transform: rotate(90deg);
+    }
+    details.menu-group > summary:hover {
+      background: #3A3A3A;
+    }
+    .menu-body {
+      padding: 10px 10px 8px;
+      border-top: 1px solid #3D3D3D;
+    }
   </style>
 </head>
 <body>
@@ -1400,20 +1773,19 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       </div>
     </div>
 
-    <div id="openAfterSaveWrap" class="hidden">
-      <label class="checkbox-row">
-        <input id="openAfterSave" type="checkbox" />
-        <span>Open clip automatically after saving</span>
-      </label>
-      <div class="hint" style="margin-top: -6px; margin-bottom: 10px;">
-        Applies only to this button — you can place separate buttons that do or don't open the saved clip.
-      </div>
+    <div id="openAfterSaveWrap" class="row hidden">
+      <label for="openAfterSaveMode">After Saving Clip (This Button)</label>
+      <select id="openAfterSaveMode">
+        <option value="global">Follow Global Setting</option>
+        <option value="open">Always open clip on this button</option>
+        <option value="never">Never open clip on this button</option>
+      </select>
     </div>
 
     <div id="stepOnlyRow" class="row hidden">
       <label id="stepDurationLabel" for="stepDuration">Step Length (HH:MM:SS, MM:SS, or sec)</label>
       <input id="stepDuration" type="text" placeholder="00:30" value="00:30" />
-      <div id="stepDurationHint" class="hint">Changes Dynamic Length by 30s per press (independent to this button)</div>
+      <div id="stepDurationHint" class="hint">Changes Dynamic Length by 30s per press · Hold key to auto-repeat</div>
     </div>
 
     <div id="minFloorRow" class="row hidden">
@@ -1427,10 +1799,53 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       <input id="resetDuration" type="text" placeholder="00:30" value="00:30" />
       <div id="resetDurationHint" class="hint">Sets Dynamic Length to 30s (0:30) when pressed · Independent to this button</div>
     </div>
+
+    <!-- Collapsible Per-Button Custom Text Size & Key Background (kept together in one menu) -->
+    <details id="menu-appearance" class="menu-group">
+      <summary>Custom Text Size &amp; Key Background</summary>
+      <div class="menu-body">
+        <div class="row">
+          <label for="fontSizeBoost">Font Size Boost (+pt above Stream Deck size)</label>
+          <div class="inline-group">
+            <button id="boostMinusBtn" type="button" title="Decrease font boost">-1</button>
+            <input id="fontSizeBoost" type="number" step="1" min="0" max="56" placeholder="0" value="0" />
+            <button id="boostPlusBtn" type="button" title="Increase font boost">+1</button>
+            <button id="boostResetBtn" type="button">Reset (0)</button>
+          </div>
+          <div id="fontSizeBoostHint" class="hint">0 = Default Stream Deck text. Increase (+1, +2, …) to scale past 16/18pt using Stream Deck's selected font &amp; color.</div>
+        </div>
+
+        <div class="row">
+          <label for="bgImagePath">Key Background Image (Optional — .png / .jpg)</label>
+          <div class="inline-group">
+            <input id="bgImagePath" type="text" placeholder="Optional PNG/JPG behind boosted text" />
+            <button type="button" data-browse-file="bgImagePath" data-kind="image" data-title="Select Key Background Image">Browse</button>
+            <button id="clearBgImageBtn" type="button">Clear</button>
+          </div>
+          <div class="hint">Renders your PNG/JPG right behind boosted dynamic text (use this instead of Stream Deck's top-left icon box when Boost &gt; 0).</div>
+        </div>
+
+        <div class="row">
+          <label for="customBoostText">Boosted Text Override (Optional)</label>
+          <input id="customBoostText" type="text" placeholder="Leave blank for automatic timer / + / -" />
+          <div class="hint">Keep Stream Deck's main Title box blank so text doesn't double up.</div>
+        </div>
+      </div>
+    </details>
   </div>
 
   <!-- Shared Global Plugin Settings -->
   <div class="section-heading">Global Plugin Settings</div>
+
+  <label class="checkbox-row">
+    <input id="globalOpenAfterSave" type="checkbox" />
+    <span>Open clip automatically after saving</span>
+  </label>
+
+  <label class="checkbox-row" style="margin-bottom: 12px;">
+    <input id="deleteOriginal" type="checkbox" />
+    <span>Delete original master capture after trim succeeds</span>
+  </label>
 
   <div class="row">
     <label for="masterHotkey">Master Replay Hotkey (OBS / ShadowPlay)</label>
@@ -1441,67 +1856,103 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
     <div class="hint">Shortcut sent to save the master instant replay buffer</div>
   </div>
 
-  <div class="row">
-    <label for="mainCapturesDir">Main Captures Directory</label>
-    <div class="inline-group">
-      <input id="mainCapturesDir" type="text" placeholder="C:\\Users\\You\\Videos\\Captures" />
-      <button type="button" data-browse-folder="mainCapturesDir" data-title="Select Main Captures Directory">Browse</button>
+  <!-- Collapsible 1: Directories & FFmpeg Path (open by default) -->
+  <details id="menu-dirs" class="menu-group" open>
+    <summary>Directories &amp; FFmpeg Path</summary>
+    <div class="menu-body">
+      <div class="row">
+        <label for="mainCapturesDir">Main Captures Directory</label>
+        <div class="inline-group">
+          <input id="mainCapturesDir" type="text" placeholder="C:\\Users\\You\\Videos\\Captures" />
+          <button type="button" data-browse-folder="mainCapturesDir" data-title="Select Main Captures Directory">Browse</button>
+        </div>
+        <div class="hint">Watches root folder and game subfolders automatically</div>
+      </div>
+
+      <div class="row">
+        <label for="outputDir">Output Directory</label>
+        <div class="inline-group">
+          <input id="outputDir" type="text" placeholder="C:\\Users\\You\\Videos\\Replays" />
+          <button type="button" data-browse-folder="outputDir" data-title="Select Trimmed Output Directory">Browse</button>
+        </div>
+      </div>
+
+      <div class="row">
+        <label for="ffmpegPath">FFmpeg Path (Optional)</label>
+        <div class="inline-group">
+          <input id="ffmpegPath" type="text" placeholder="Auto-detect from system PATH" />
+          <button type="button" data-browse-file="ffmpegPath" data-kind="exe" data-title="Select ffmpeg executable">Browse</button>
+          <button id="verifyFfmpegBtn" type="button">Verify</button>
+        </div>
+        <div id="ffmpegStatus" class="hint">Leave blank if FFmpeg is installed in PATH</div>
+      </div>
     </div>
-    <div class="hint">Watches root folder and game subfolders automatically</div>
-  </div>
+  </details>
 
-  <div class="row">
-    <label for="outputDir">Output Directory</label>
-    <div class="inline-group">
-      <input id="outputDir" type="text" placeholder="C:\\Users\\You\\Videos\\Replays" />
-      <button type="button" data-browse-folder="outputDir" data-title="Select Trimmed Output Directory">Browse</button>
+  <!-- Collapsible 2: Sound Confirmations (open by default) -->
+  <details id="menu-sounds" class="menu-group" open>
+    <summary>Sound Confirmations</summary>
+    <div class="menu-body">
+      <div class="row">
+        <label for="successSoundPath">Success Sound (.wav / .mp3)</label>
+        <div class="inline-group">
+          <input id="successSoundPath" type="text" placeholder="Optional path to .wav or .mp3" />
+          <button type="button" data-browse-file="successSoundPath" data-kind="audio" data-title="Select Success Sound">Browse</button>
+          <button type="button" data-test-sound="successSoundPath">Test</button>
+        </div>
+      </div>
+
+      <div class="row">
+        <label for="errorSoundPath">Failure / Exception Sound (.wav / .mp3)</label>
+        <div class="inline-group">
+          <input id="errorSoundPath" type="text" placeholder="Optional path to .wav or .mp3" />
+          <button type="button" data-browse-file="errorSoundPath" data-kind="audio" data-title="Select Failure Sound">Browse</button>
+          <button type="button" data-test-sound="errorSoundPath">Test</button>
+        </div>
+      </div>
     </div>
-  </div>
+  </details>
 
-  <label class="checkbox-row">
-    <input id="deleteOriginal" type="checkbox" />
-    <span>Delete original master capture after trim succeeds</span>
-  </label>
+  <!-- Collapsible 3: Key Delay / Repeat (closed by default, just above Diagnostics) -->
+  <details id="menu-repeat" class="menu-group">
+    <summary>Key Delay / Repeat</summary>
+    <div class="menu-body">
+      <div class="row">
+        <label for="repeatDelaySeconds">Hold Delay Before Repeat (seconds)</label>
+        <input id="repeatDelaySeconds" type="number" step="0.05" min="0.05" max="10" placeholder="0.5" value="0.5" />
+      </div>
 
-  <div class="row">
-    <label for="ffmpegPath">FFmpeg Path (Optional)</label>
-    <div class="inline-group">
-      <input id="ffmpegPath" type="text" placeholder="Auto-detect from system PATH" />
-      <button type="button" data-browse-file="ffmpegPath" data-kind="exe" data-title="Select ffmpeg executable">Browse</button>
-      <button id="verifyFfmpegBtn" type="button">Verify</button>
+      <div class="row">
+        <label for="repeatRateHz">Repeat Rate (times per second)</label>
+        <input id="repeatRateHz" type="number" step="0.5" min="0.5" max="30" placeholder="5" value="5" />
+        <div id="repeatSummaryHint" class="hint">Holding + or - waits 0.5s, then triggers 5×/sec (every 200ms)</div>
+      </div>
     </div>
-    <div id="ffmpegStatus" class="hint">Leave blank if FFmpeg is installed in PATH</div>
-  </div>
+  </details>
 
-  <div class="row">
-    <label for="successSoundPath">Success Sound (.wav / .mp3)</label>
-    <div class="inline-group">
-      <input id="successSoundPath" type="text" placeholder="Optional path to .wav or .mp3" />
-      <button type="button" data-browse-file="successSoundPath" data-kind="audio" data-title="Select Success Sound">Browse</button>
-      <button type="button" data-test-sound="successSoundPath">Test</button>
+  <!-- Collapsible 4: Diagnostics (closed by default) -->
+  <details id="menu-diagnostics" class="menu-group">
+    <summary>Diagnostics</summary>
+    <div class="menu-body">
+      <label class="checkbox-row" style="margin: 2px 0 6px;">
+        <input id="enableDebugLog" type="checkbox" />
+        <span>Enable debug log file</span>
+      </label>
+      <div class="hint">Off by default. Writes capped logs to logs/replayslice.log only while enabled.</div>
     </div>
-  </div>
-
-  <div class="row">
-    <label for="errorSoundPath">Failure / Exception Sound (.wav / .mp3)</label>
-    <div class="inline-group">
-      <input id="errorSoundPath" type="text" placeholder="Optional path to .wav or .mp3" />
-      <button type="button" data-browse-file="errorSoundPath" data-kind="audio" data-title="Select Failure Sound">Browse</button>
-      <button type="button" data-test-sound="errorSoundPath">Test</button>
-    </div>
-  </div>
-
-  <details style="margin-top: 14px; border-top: 1px solid #3D3D3D; padding-top: 8px;">
-    <summary style="cursor: pointer; color: #7A7A7A; font-size: 11px; user-select: none;">Diagnostics</summary>
-    <label class="checkbox-row" style="margin: 8px 0 4px;">
-      <input id="enableDebugLog" type="checkbox" />
-      <span>Enable debug log file</span>
-    </label>
-    <div class="hint">Off by default. Writes capped logs to logs/replayslice.log only while enabled.</div>
   </details>
 
   <script>
     const DEFAULTS = ${serializedDefaults};
+    const MENU_STORAGE_KEY = "replayslice_pi_menus_v1";
+    const DEFAULT_MENU_OPEN = {
+      appearance: false,
+      dirs: true,
+      sounds: true,
+      repeat: false,
+      diagnostics: false
+    };
+
     let websocket = null;
     let piUUID = "";
     let actionInfo = null;
@@ -1511,9 +1962,60 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       stepDuration: "00:30",
       minFloor: "",
       resetDuration: "00:30",
-      openAfterSave: false
+      openAfterSaveMode: "global",
+      fontSizeBoost: 0,
+      bgImagePath: "",
+      customBoostText: ""
     };
     let recordingHotkey = false;
+    let isApplyingMenuState = false;
+
+    function loadRememberedMenuState(fromGlobal) {
+      let local = null;
+      try {
+        const raw = localStorage.getItem(MENU_STORAGE_KEY);
+        if (raw) local = JSON.parse(raw);
+      } catch {}
+      const source = (fromGlobal && typeof fromGlobal === "object")
+        ? Object.assign({}, DEFAULT_MENU_OPEN, local || {}, fromGlobal)
+        : Object.assign({}, DEFAULT_MENU_OPEN, local || {});
+      return {
+        appearance: Boolean(source.appearance),
+        dirs: source.dirs !== false,
+        sounds: source.sounds !== false,
+        repeat: Boolean(source.repeat),
+        diagnostics: Boolean(source.diagnostics)
+      };
+    }
+
+    function applyMenuOpenState(menuState) {
+      isApplyingMenuState = true;
+      try {
+        document.getElementById("menu-appearance").open = Boolean(menuState.appearance);
+        document.getElementById("menu-dirs").open = menuState.dirs !== false;
+        document.getElementById("menu-sounds").open = menuState.sounds !== false;
+        document.getElementById("menu-repeat").open = Boolean(menuState.repeat);
+        document.getElementById("menu-diagnostics").open = Boolean(menuState.diagnostics);
+        try {
+          localStorage.setItem(MENU_STORAGE_KEY, JSON.stringify(menuState));
+        } catch {}
+      } finally {
+        isApplyingMenuState = false;
+      }
+    }
+
+    function readCurrentMenuOpenState() {
+      return {
+        appearance: document.getElementById("menu-appearance").open,
+        dirs: document.getElementById("menu-dirs").open,
+        sounds: document.getElementById("menu-sounds").open,
+        repeat: document.getElementById("menu-repeat").open,
+        diagnostics: document.getElementById("menu-diagnostics").open
+      };
+    }
+
+    // Apply remembered collapsible menu state immediately before first paint
+    applyMenuOpenState(loadRememberedMenuState(null));
 
     function parseTimecode(raw, fallback) {
       if (!raw) return fallback;
@@ -1564,10 +2066,10 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
           const rawFloor = document.getElementById("minFloor").value.trim();
           const effFloor = rawFloor ? Math.max(1, parseTimecode(rawFloor, autoFloor)) : autoFloor;
           stepHint.textContent =
-            "Subtracts " + stepSec + "s (" + formatDisplayDuration(stepSec) + ") per press · Bottoms out at " + formatDisplayDuration(effFloor);
+            "Subtracts " + stepSec + "s (" + formatDisplayDuration(stepSec) + ") per press · Bottoms out at " + formatDisplayDuration(effFloor) + " · Hold to repeat";
         } else {
           stepHint.textContent =
-            "Adds +" + stepSec + "s (" + formatDisplayDuration(stepSec) + ") per press · Saved independently on this button";
+            "Adds +" + stepSec + "s (" + formatDisplayDuration(stepSec) + ") per press · Hold to repeat";
         }
       }
 
@@ -1576,6 +2078,29 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       if (resetHint) {
         resetHint.textContent =
           "Sets Dynamic Length to " + resetSec + "s (" + formatDisplayDuration(resetSec) + ") when pressed · Independent to this button";
+      }
+
+      const rawBoost = Number(document.getElementById("fontSizeBoost").value);
+      const boostVal = Number.isFinite(rawBoost) && rawBoost > 0 ? Math.min(56, Math.round(rawBoost)) : 0;
+      const boostHint = document.getElementById("fontSizeBoostHint");
+      if (boostHint) {
+        if (boostVal <= 0) {
+          boostHint.textContent = "0 (Off) — Uses Stream Deck's native text size & icon layer.";
+        } else {
+          boostHint.textContent =
+            "Boost +" + boostVal + "pt (e.g. 16 → " + (16 + boostVal) + "pt) using Stream Deck's selected Font, Style & Color. Leave Stream Deck's Title box blank so text doesn't double up.";
+        }
+      }
+
+      const rawDelay = Number(document.getElementById("repeatDelaySeconds").value);
+      const delayVal = Number.isFinite(rawDelay) && rawDelay >= 0.05 ? Math.min(10, rawDelay) : 0.5;
+      const rawRate = Number(document.getElementById("repeatRateHz").value);
+      const rateVal = Number.isFinite(rawRate) && rawRate >= 0.5 ? Math.min(30, rawRate) : 5;
+      const intervalMs = Math.max(33, Math.round(1000 / rateVal));
+      const repeatHint = document.getElementById("repeatSummaryHint");
+      if (repeatHint) {
+        repeatHint.textContent =
+          "Holding + or - waits " + delayVal + "s, then triggers " + rateVal + "×/sec (every " + intervalMs + "ms)";
       }
     }
 
@@ -1592,21 +2117,41 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
         const el = document.getElementById(id);
         if (el && globalState[id] !== undefined) el.value = globalState[id];
       });
+      document.getElementById("globalOpenAfterSave").checked = Boolean(globalState.openAfterSave);
       document.getElementById("deleteOriginal").checked = globalState.deleteOriginal !== false;
+      document.getElementById("repeatDelaySeconds").value =
+        Number.isFinite(Number(globalState.repeatDelaySeconds)) ? globalState.repeatDelaySeconds : 0.5;
+      document.getElementById("repeatRateHz").value =
+        Number.isFinite(Number(globalState.repeatRateHz)) ? globalState.repeatRateHz : 5;
       document.getElementById("enableDebugLog").checked = Boolean(globalState.enableDebugLog);
+
+      if (globalState.uiMenuOpen && typeof globalState.uiMenuOpen === "object") {
+        applyMenuOpenState(loadRememberedMenuState(globalState.uiMenuOpen));
+      }
       updateHints();
     }
 
     function persistGlobal() {
+      const rawDelay = Number(document.getElementById("repeatDelaySeconds").value);
+      const rawRate = Number(document.getElementById("repeatRateHz").value);
+      const menuState = readCurrentMenuOpenState();
+      try {
+        localStorage.setItem(MENU_STORAGE_KEY, JSON.stringify(menuState));
+      } catch {}
+
       globalState = Object.assign({}, globalState, {
+        openAfterSave: document.getElementById("globalOpenAfterSave").checked,
+        deleteOriginal: document.getElementById("deleteOriginal").checked,
         masterHotkey: document.getElementById("masterHotkey").value.trim(),
         mainCapturesDir: document.getElementById("mainCapturesDir").value.trim(),
         outputDir: document.getElementById("outputDir").value.trim(),
-        deleteOriginal: document.getElementById("deleteOriginal").checked,
         ffmpegPath: document.getElementById("ffmpegPath").value.trim(),
         successSoundPath: document.getElementById("successSoundPath").value.trim(),
         errorSoundPath: document.getElementById("errorSoundPath").value.trim(),
-        enableDebugLog: document.getElementById("enableDebugLog").checked
+        repeatDelaySeconds: Number.isFinite(rawDelay) && rawDelay >= 0.05 ? Math.min(10, rawDelay) : 0.5,
+        repeatRateHz: Number.isFinite(rawRate) && rawRate >= 0.5 ? Math.min(30, rawRate) : 5,
+        enableDebugLog: document.getElementById("enableDebugLog").checked,
+        uiMenuOpen: menuState
       });
       updateHints();
       if (websocket && websocket.readyState === 1) {
@@ -1618,13 +2163,29 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       }
     }
 
+    function normalizeOpenMode(saved) {
+      if (saved && (saved.openAfterSaveMode === "global" || saved.openAfterSaveMode === "open" || saved.openAfterSaveMode === "never")) {
+        return saved.openAfterSaveMode;
+      }
+      if (saved && saved.openAfterSave === true) return "open";
+      return "global";
+    }
+
     function persistAction() {
+      const modeVal = document.getElementById("openAfterSaveMode").value || "global";
+      const rawBoost = Number(document.getElementById("fontSizeBoost").value);
+      const safeBoost = Number.isFinite(rawBoost) && rawBoost > 0 ? Math.min(56, Math.round(rawBoost)) : 0;
+
       actionState = Object.assign({}, actionState, {
         fixedDuration: document.getElementById("fixedDuration").value.trim() || "00:30",
         stepDuration: document.getElementById("stepDuration").value.trim() || "00:30",
         minFloor: document.getElementById("minFloor").value.trim(),
         resetDuration: document.getElementById("resetDuration").value.trim() || "00:30",
-        openAfterSave: document.getElementById("openAfterSave").checked
+        openAfterSaveMode: modeVal,
+        openAfterSave: modeVal === "open",
+        fontSizeBoost: safeBoost,
+        bgImagePath: document.getElementById("bgImagePath").value.trim(),
+        customBoostText: document.getElementById("customBoostText").value
       });
       updateHints();
       if (websocket && websocket.readyState === 1) {
@@ -1663,43 +2224,50 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       const isDecrease = actionInfo.action === "${PLUGIN_UUID}.dynamicdecrease";
       const isReset = actionInfo.action === "${PLUGIN_UUID}.dynamicreset";
 
-      if (isFixed || isDynamic || isIncrease || isDecrease || isReset) {
-        document.getElementById("actionSettingsSection").classList.remove("hidden");
-        const saved = (actionInfo.payload && actionInfo.payload.settings) || {};
-        actionState = Object.assign({}, saved, {
-          fixedDuration: saved.fixedDuration || "00:30",
-          stepDuration: saved.stepDuration || "00:30",
-          minFloor: saved.minFloor || "",
-          resetDuration: saved.resetDuration || "00:30",
-          openAfterSave: Boolean(saved.openAfterSave)
-        });
+      // Show Button Action Settings on all ReplaySlice buttons (every button supports Custom Text Size & Key Background)
+      document.getElementById("actionSettingsSection").classList.remove("hidden");
+      const saved = (actionInfo.payload && actionInfo.payload.settings) || {};
+      const initBoost = Number(saved.fontSizeBoost);
+      actionState = Object.assign({}, saved, {
+        fixedDuration: saved.fixedDuration || "00:30",
+        stepDuration: saved.stepDuration || "00:30",
+        minFloor: saved.minFloor || "",
+        resetDuration: saved.resetDuration || "00:30",
+        openAfterSaveMode: normalizeOpenMode(saved),
+        fontSizeBoost: Number.isFinite(initBoost) && initBoost > 0 ? Math.min(56, Math.round(initBoost)) : 0,
+        bgImagePath: saved.bgImagePath || "",
+        customBoostText: saved.customBoostText || ""
+      });
 
-        if (isFixed || isDynamic) {
-          document.getElementById("openAfterSaveWrap").classList.remove("hidden");
-          document.getElementById("openAfterSave").checked = actionState.openAfterSave;
-        }
-        if (isFixed) {
-          document.getElementById("fixedOnlyRow").classList.remove("hidden");
-          document.getElementById("fixedDuration").value = actionState.fixedDuration;
-        }
-        if (isDynamic) {
-          document.getElementById("dynamicOnlyRow").classList.remove("hidden");
-        }
-        if (isIncrease || isDecrease) {
-          document.getElementById("stepOnlyRow").classList.remove("hidden");
-          document.getElementById("stepDurationLabel").textContent = isIncrease
-            ? "Increase Step Length (HH:MM:SS, MM:SS, or sec)"
-            : "Decrease Step Length (HH:MM:SS, MM:SS, or sec)";
-          document.getElementById("stepDuration").value = actionState.stepDuration;
-        }
-        if (isDecrease) {
-          document.getElementById("minFloorRow").classList.remove("hidden");
-          document.getElementById("minFloor").value = actionState.minFloor;
-        }
-        if (isReset) {
-          document.getElementById("resetOnlyRow").classList.remove("hidden");
-          document.getElementById("resetDuration").value = actionState.resetDuration;
-        }
+      document.getElementById("fontSizeBoost").value = actionState.fontSizeBoost;
+      document.getElementById("bgImagePath").value = actionState.bgImagePath;
+      document.getElementById("customBoostText").value = actionState.customBoostText;
+
+      if (isFixed || isDynamic) {
+        document.getElementById("openAfterSaveWrap").classList.remove("hidden");
+        document.getElementById("openAfterSaveMode").value = actionState.openAfterSaveMode;
+      }
+      if (isFixed) {
+        document.getElementById("fixedOnlyRow").classList.remove("hidden");
+        document.getElementById("fixedDuration").value = actionState.fixedDuration;
+      }
+      if (isDynamic) {
+        document.getElementById("dynamicOnlyRow").classList.remove("hidden");
+      }
+      if (isIncrease || isDecrease) {
+        document.getElementById("stepOnlyRow").classList.remove("hidden");
+        document.getElementById("stepDurationLabel").textContent = isIncrease
+          ? "Increase Step Length (HH:MM:SS, MM:SS, or sec)"
+          : "Decrease Step Length (HH:MM:SS, MM:SS, or sec)";
+        document.getElementById("stepDuration").value = actionState.stepDuration;
+      }
+      if (isDecrease) {
+        document.getElementById("minFloorRow").classList.remove("hidden");
+        document.getElementById("minFloor").value = actionState.minFloor;
+      }
+      if (isReset) {
+        document.getElementById("resetOnlyRow").classList.remove("hidden");
+        document.getElementById("resetDuration").value = actionState.resetDuration;
       }
 
       websocket = new WebSocket("ws://127.0.0.1:" + inPort);
@@ -1718,14 +2286,21 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
           renderGlobalFields();
         } else if (msg.event === "didReceiveSettings") {
           const incoming = (msg.payload && msg.payload.settings) || {};
+          const incBoost = Number(incoming.fontSizeBoost !== undefined ? incoming.fontSizeBoost : actionState.fontSizeBoost);
           actionState = Object.assign({}, actionState, incoming, {
             fixedDuration: incoming.fixedDuration || actionState.fixedDuration || "00:30",
             stepDuration: incoming.stepDuration || actionState.stepDuration || "00:30",
             minFloor: incoming.minFloor !== undefined ? incoming.minFloor : (actionState.minFloor || ""),
             resetDuration: incoming.resetDuration || actionState.resetDuration || "00:30",
-            openAfterSave: Boolean(incoming.openAfterSave)
+            openAfterSaveMode: normalizeOpenMode(incoming),
+            fontSizeBoost: Number.isFinite(incBoost) && incBoost > 0 ? Math.min(56, Math.round(incBoost)) : 0,
+            bgImagePath: incoming.bgImagePath !== undefined ? incoming.bgImagePath : (actionState.bgImagePath || ""),
+            customBoostText: incoming.customBoostText !== undefined ? incoming.customBoostText : (actionState.customBoostText || "")
           });
-          document.getElementById("openAfterSave").checked = actionState.openAfterSave;
+          document.getElementById("openAfterSaveMode").value = actionState.openAfterSaveMode;
+          document.getElementById("fontSizeBoost").value = actionState.fontSizeBoost;
+          document.getElementById("bgImagePath").value = actionState.bgImagePath;
+          document.getElementById("customBoostText").value = actionState.customBoostText;
           if (isFixed) document.getElementById("fixedDuration").value = actionState.fixedDuration;
           if (isIncrease || isDecrease) document.getElementById("stepDuration").value = actionState.stepDuration;
           if (isDecrease) document.getElementById("minFloor").value = actionState.minFloor;
@@ -1740,20 +2315,53 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
             const input = document.getElementById(msg.payload.field);
             if (input) {
               input.value = msg.payload.path;
-              persistGlobal();
+              if (msg.payload.field === "bgImagePath") {
+                persistAction();
+              } else {
+                persistGlobal();
+              }
             }
           }
         }
       };
     };
 
-    document.querySelectorAll("#masterHotkey, #mainCapturesDir, #outputDir, #ffmpegPath, #successSoundPath, #errorSoundPath")
+    document.querySelectorAll("#masterHotkey, #mainCapturesDir, #outputDir, #ffmpegPath, #successSoundPath, #errorSoundPath, #repeatDelaySeconds, #repeatRateHz")
       .forEach((el) => el.addEventListener("input", persistGlobal));
+    document.getElementById("globalOpenAfterSave").addEventListener("change", persistGlobal);
     document.getElementById("deleteOriginal").addEventListener("change", persistGlobal);
     document.getElementById("enableDebugLog").addEventListener("change", persistGlobal);
-    document.querySelectorAll("#fixedDuration, #stepDuration, #minFloor, #resetDuration")
+
+    ["menu-appearance", "menu-dirs", "menu-sounds", "menu-repeat", "menu-diagnostics"].forEach((id) => {
+      document.getElementById(id).addEventListener("toggle", () => {
+        if (!isApplyingMenuState) persistGlobal();
+      });
+    });
+
+    document.querySelectorAll("#fixedDuration, #stepDuration, #minFloor, #resetDuration, #fontSizeBoost, #bgImagePath, #customBoostText")
       .forEach((el) => el.addEventListener("input", persistAction));
-    document.getElementById("openAfterSave").addEventListener("change", persistAction);
+    document.getElementById("openAfterSaveMode").addEventListener("change", persistAction);
+
+    document.getElementById("boostMinusBtn").addEventListener("click", () => {
+      const el = document.getElementById("fontSizeBoost");
+      const cur = Math.max(0, Number(el.value) || 0);
+      el.value = Math.max(0, cur - 1);
+      persistAction();
+    });
+    document.getElementById("boostPlusBtn").addEventListener("click", () => {
+      const el = document.getElementById("fontSizeBoost");
+      const cur = Math.max(0, Number(el.value) || 0);
+      el.value = Math.min(56, cur + 1);
+      persistAction();
+    });
+    document.getElementById("boostResetBtn").addEventListener("click", () => {
+      document.getElementById("fontSizeBoost").value = 0;
+      persistAction();
+    });
+    document.getElementById("clearBgImageBtn").addEventListener("click", () => {
+      document.getElementById("bgImagePath").value = "";
+      persistAction();
+    });
 
     document.getElementById("verifyFfmpegBtn").addEventListener("click", () => {
       sendPluginCmd({ cmd: "verifyFfmpeg", ffmpegPath: document.getElementById("ffmpegPath").value.trim() });
@@ -1921,15 +2529,17 @@ export function generateReadmeMarkdown(): string {
 
 ## Included Stream Deck Actions
 Look under **ReplaySlice** in the right-hand Actions list of your Stream Deck software:
-1. **Fixed Length** — Saves a clip of a specific duration (\`HH:MM:SS\` or \`MM:SS\`) set on that button, with an optional per-button toggle to automatically open the clip after saving.
-2. **Dynamic Length** — Defaults to \`1:00\`. Updates its displayed duration automatically when you press Dynamic Increase / Decrease / Reset, and supports the per-button **Open clip automatically after saving** toggle independently on each placed Dynamic Length button. Style the font, size, color, and icon directly in Stream Deck's Title bar (leave the static Title text empty so the dynamic timer displays).
-3. **Dynamic Increase** — Adds a button-specific step duration (default \`00:30\`) to the Dynamic Length timer. Place multiple buttons with different step sizes as needed.
-4. **Dynamic Decrease** — Subtracts a button-specific step duration (default \`00:30\`) from the Dynamic Length timer, with an optional minimum floor. Place multiple buttons (e.g. a small step and a huge drop) independently.
+1. **Fixed Length** — Saves a clip of a specific duration (\`HH:MM:SS\` or \`MM:SS\`) set on that button, with a per-button override to follow the global auto-open setting, always open, or never open.
+2. **Dynamic Length** — Defaults to \`1:00\`. Updates its displayed duration automatically when you press or hold Dynamic Increase / Decrease or press Reset Dynamic Length, and supports per-button auto-open overrides independently on each placed Dynamic Length button. Style the font, size, color, and icon directly in Stream Deck's Title bar (leave the static Title text empty so the dynamic timer displays).
+3. **Dynamic Increase** — Defaults to \`+\` text and adds a button-specific step duration (default \`00:30\`) to the Dynamic Length timer. Hold the key down to auto-repeat after a short delay (configurable under **Key Delay / Repeat**).
+4. **Dynamic Decrease** — Defaults to \`-\` text and subtracts a button-specific step duration (default \`00:30\`) from the Dynamic Length timer, with an optional minimum floor. Hold the key down to auto-repeat.
 5. **Reset Dynamic Length** — Sets Dynamic Length directly to a button-specific target duration (default \`00:30\`). Place multiple reset/preset buttons for instant jumps to any duration.
 6. **Open Output Directory** — Opens your configured Output Directory in Explorer / Finder.
 7. **Open Captures Directory** — Opens your configured Main Captures Directory in Explorer / Finder.
 
 ## Key Behaviors
+- **Custom Text Size Boost & Key Background**: Every ReplaySlice button includes a collapsible **Custom Text Size & Key Background** menu in *Button Action Settings*. Leave **Font Size Boost** at \`0\` for native Stream Deck text, or dial \`+1\`, \`+2\`, … up to \`36pt+\` using the exact font, style, color, and alignment selected in Stream Deck's main UI — with an optional **Key Background Image (\`.png\` / \`.jpg\`)** picker right inside the same menu so custom PNG backgrounds work behind giant dynamic timers.
+- **Hold-to-Repeat on \`+\` / \`-\`**: Holding *Dynamic Increase* or *Dynamic Decrease* waits \`0.5s\` by default and then repeats \`5\` times per second. Both values can be customized in Global Plugin Settings under **Key Delay / Repeat**.
 - **2-Second Capture Debounce**: Rapidly pressing *Fixed Length* or *Dynamic Length* within 2 seconds ignores extra presses. *Dynamic Increase*, *Dynamic Decrease*, and *Reset Dynamic Length* are never debounced.
 - **Zero Re-Encoding & Aligned Audio/Video**: Waits for OBS / ShadowPlay to close its write lock so the file is 100% flushed, inspects audio & video durations via \`ffprobe\`, snaps to the nearest keyframe, and runs \`ffmpeg -c copy -avoid_negative_ts make_zero -shortest\` so audio and video lengths match without cutting off a 1.5s tail.
 - **Dynamic Fail Timer**: Minimum 10 seconds, plus 2 seconds for every 5 minutes of the capture length (e.g. \`10:30\` = 14s fail timer, \`01:00:00\` = 34s fail timer). Plays your Success Sound (\`.wav\` or \`.mp3\`) if configured once the trimmed clip is verified on disk, or Failure Sound if it fails/times out.

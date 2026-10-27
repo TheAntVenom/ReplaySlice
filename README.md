@@ -39,8 +39,8 @@ Once installed, find **ReplaySlice** in the right-hand Actions sidebar of the El
 | :--- | :--- |
 | **Fixed Length** | Captures and trims an instant replay to a fixed duration (`HH:MM:SS` or `MM:SS`) configured on that specific button. Drop as many Fixed Length keys onto your deck as you want. |
 | **Dynamic Length** | Defaults to `1:00`. Displays a live duration directly on the key face and captures that exact length when pressed. |
-| **Dynamic Increase** | Adds a button-specific step duration (default `00:30`) to **Dynamic Length**. Place multiple `+` buttons with different step sizes independently. |
-| **Dynamic Decrease** | Subtracts a button-specific step duration (default `00:30`) from **Dynamic Length**, with an optional minimum floor. Place multiple `-` buttons (e.g. a fine adjustment and a huge drop) independently. |
+| **Dynamic Increase** | Defaults to `+` text and adds a button-specific step duration (default `00:30`) to **Dynamic Length**. Hold the key down to auto-repeat, or place multiple `+` buttons with different step sizes independently. |
+| **Dynamic Decrease** | Defaults to `-` text and subtracts a button-specific step duration (default `00:30`) from **Dynamic Length**, with an optional minimum floor. Hold the key down to auto-repeat, or place multiple `-` buttons independently. |
 | **Reset Dynamic Length** | Sets **Dynamic Length** directly to a button-specific target duration (default `00:30`). Place multiple reset/preset buttons to jump straight to any duration. |
 | **Open Output Directory** | Opens your trimmed clips folder in Windows Explorer or macOS Finder. |
 | **Open Captures Directory** | Opens your raw master captures folder in Windows Explorer or macOS Finder. |
@@ -72,16 +72,16 @@ Once installed, find **ReplaySlice** in the right-hand Actions sidebar of the El
 | Setting | Scope | Description |
 | :--- | :--- | :--- |
 | **Fixed Replay Length** | *Fixed Length* key | Duration to keep (`HH:MM:SS`, `MM:SS`, or seconds — e.g. `00:30` or `05:00`). |
-| **Open Clip After Saving** | *Fixed* & *Dynamic Length* keys | Optional per-button checkbox that opens the newly trimmed clip in your default media player immediately after saving. Saved independently per key so you can have separate silent-save and instant-review buttons (including multiple *Dynamic Length* keys). |
+| **After Saving Clip** | Global & per-key (*Fixed* / *Dynamic Length*) | Global **Open clip automatically after saving** toggle at the top of Global Plugin Settings, plus a per-button override (*Follow Global Setting*, *Always open*, or *Never open*) so you can mix silent-save and instant-review buttons. |
 | **Step Length** | *Dynamic Increase* & *Decrease* keys | Amount added or subtracted per press (`HH:MM:SS`, `MM:SS`, or seconds — default `00:30`). Configured independently on each `+` and `-` button, with an optional **Minimum Floor** on *Dynamic Decrease*. |
 | **Reset Target Length** | *Reset Dynamic Length* key | Duration that *Dynamic Length* jumps to when pressed (default `00:30`). Configured independently per button so you can create multiple preset keys. |
+| **Custom Text Size & Key Background** | Per-key (Collapsible) | **Font Size Boost** (`0` default, `+1`, `+2`, … past Stream Deck's `16`/`18pt` cap using Stream Deck's selected font, style, color & alignment) paired in the same menu with an optional **Key Background Image (`.png` / `.jpg`)** picker so custom PNG backgrounds work behind giant dynamic timers. |
+| **Delete Original Capture** | Global | Enabled by default at the top of Global Plugin Settings. Deletes the full-length master capture only after verifying the trimmed output clip exists and is non-empty on disk. |
 | **Master Replay Hotkey** | Global | Shortcut sent to trigger your recorder's Instant Replay save (e.g. `Alt+F10` for ShadowPlay, or your OBS Replay Buffer hotkey). Includes a one-click **Record** button. |
-| **Main Captures Directory** | Global | Folder where OBS or ShadowPlay writes master replay files. Automatically scans subfolders (supporting ShadowPlay's per-game folders). |
-| **Output Directory** | Global | Destination folder where trimmed clips (`<OriginalName>_<Duration>.<ext>`) are saved. |
-| **Delete Original Capture** | Global | Enabled by default. Deletes the full-length master capture only after verifying the trimmed output clip exists and is non-empty on disk. |
-| **FFmpeg Path (Optional)** | Global | Custom path to `ffmpeg` if it isn't installed in your system `PATH`. Includes a **Verify** button to confirm detection. |
-| **Success Sound** | Global | Optional `.wav` or `.mp3` played once the trimmed clip is verified on disk. |
-| **Failure Sound** | Global | Optional `.wav` or `.mp3` played if FFmpeg is missing or no output clip is written before the fail timer expires. |
+| **Directories & FFmpeg Path** | Global (Collapsible) | **Main Captures Directory** (watched recursively), **Output Directory**, and optional **FFmpeg Path** with one-click **Verify** button. Open by default and remembers collapse state. |
+| **Sound Confirmations** | Global (Collapsible) | Optional **Success Sound** and **Failure Sound** (`.wav` or `.mp3`) with **Test** buttons. Open by default and remembers collapse state. |
+| **Key Delay / Repeat** | Global (Collapsible) | Configures **Hold Delay Before Repeat** (default `0.5s`) and **Repeat Rate** (default `5` times/sec) when holding *Dynamic Increase* or *Dynamic Decrease*. Remembers collapse state. |
+| **Diagnostics** | Global (Collapsible) | Optional **Enable debug log file** toggle (off by default, closed by default, remembers collapse state). |
 
 ---
 

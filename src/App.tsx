@@ -18,13 +18,16 @@ import {
 const STORAGE_KEY = 'replayslice_plugin_defaults_v2';
 
 const INITIAL_SETTINGS: GlobalPluginSettings = {
+  openAfterSave: false,
+  deleteOriginal: true,
   masterHotkey: 'Alt+F10',
   mainCapturesDir: '',
   outputDir: '',
-  deleteOriginal: true,
   ffmpegPath: '',
   successSoundPath: '',
   errorSoundPath: '',
+  repeatDelaySeconds: 0.5,
+  repeatRateHz: 5,
 };
 
 export default function App() {
