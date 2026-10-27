@@ -1,6 +1,6 @@
 # ReplaySlice
 
-<img width="624" height="536" alt="replayslice" src="https://github.com/user-attachments/assets/3b7442d1-a9d6-4cee-8d84-9d3d9102098f" />
+<img width="312" height="268" alt="replayslice" src="https://github.com/user-attachments/assets/3b7442d1-a9d6-4cee-8d84-9d3d9102098f" />
 
 **Multi-length Instant Replay trimming for Elgato Stream Deck — powered by FFmpeg stream copying with zero re-encoding.**
 
