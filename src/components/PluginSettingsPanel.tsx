@@ -247,56 +247,80 @@ export function PluginSettingsPanel({
               </button>
 
               {menuOpen.dirs && (
-                <div className="p-4 sm:p-5 border-t border-slate-800 grid grid-cols-1 md:grid-cols-3 gap-5">
-                  <div className="flex flex-col gap-1.5">
-                    <label htmlFor="cfg-main-dir" className="text-xs font-medium text-slate-300">
-                      Main Captures Directory
-                    </label>
-                    <input
-                      id="cfg-main-dir"
-                      type="text"
-                      value={settings.mainCapturesDir}
-                      onChange={(e) => updateField('mainCapturesDir', e.target.value)}
-                      placeholder="C:\Users\You\Videos\Captures"
-                      className="w-full bg-[#0B0F17] border border-slate-700/90 focus:border-blue-500 rounded-lg px-3 py-2 text-sm font-mono text-slate-100 outline-none transition-colors"
-                    />
-                    <p className="text-xs text-slate-500">
-                      Watched recursively for master clips and opened by Open Captures Directory.
-                    </p>
+                <div className="p-4 sm:p-5 border-t border-slate-800 space-y-5">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                    <div className="flex flex-col gap-1.5">
+                      <label htmlFor="cfg-main-dir" className="text-xs font-medium text-slate-300">
+                        Main Captures Directory
+                      </label>
+                      <input
+                        id="cfg-main-dir"
+                        type="text"
+                        value={settings.mainCapturesDir}
+                        onChange={(e) => updateField('mainCapturesDir', e.target.value)}
+                        placeholder="C:\Users\You\Videos\Captures"
+                        className="w-full bg-[#0B0F17] border border-slate-700/90 focus:border-blue-500 rounded-lg px-3 py-2 text-sm font-mono text-slate-100 outline-none transition-colors"
+                      />
+                      <p className="text-xs text-slate-500">
+                        {settings.recursiveSearchCaptures
+                          ? 'Watches this folder and game subfolders for master clips.'
+                          : 'Watches only this top-level folder for master clips (subfolders ignored).'}
+                      </p>
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <label htmlFor="cfg-out-dir" className="text-xs font-medium text-slate-300">
+                        Output Directory
+                      </label>
+                      <input
+                        id="cfg-out-dir"
+                        type="text"
+                        value={settings.outputDir}
+                        onChange={(e) => updateField('outputDir', e.target.value)}
+                        placeholder="C:\Users\You\Videos\Trimmed Replays"
+                        className="w-full bg-[#0B0F17] border border-slate-700/90 focus:border-blue-500 rounded-lg px-3 py-2 text-sm font-mono text-slate-100 outline-none transition-colors"
+                      />
+                      <p className="text-xs text-slate-500">
+                        Where trimmed clips are written and opened by Open Output Directory.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <label htmlFor="cfg-ffmpeg" className="text-xs font-medium text-slate-300">
+                        FFmpeg Path (Optional)
+                      </label>
+                      <input
+                        id="cfg-ffmpeg"
+                        type="text"
+                        value={settings.ffmpegPath}
+                        onChange={(e) => updateField('ffmpegPath', e.target.value)}
+                        placeholder="Leave blank to use system PATH"
+                        className="w-full bg-[#0B0F17] border border-slate-700/90 focus:border-blue-500 rounded-lg px-3 py-2 text-sm font-mono text-slate-100 outline-none transition-colors"
+                      />
+                      <p className="text-xs text-slate-500">
+                        Auto-detects FFmpeg &amp; FFprobe in PATH; throws an error if missing.
+                      </p>
+                    </div>
                   </div>
 
-                  <div className="flex flex-col gap-1.5">
-                    <label htmlFor="cfg-out-dir" className="text-xs font-medium text-slate-300">
-                      Output Directory
+                  <div className="pt-3 border-t border-slate-800/80">
+                    <label className="flex items-start gap-3 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(settings.recursiveSearchCaptures)}
+                        onChange={(e) => updateField('recursiveSearchCaptures', e.target.checked)}
+                        className="mt-0.5 w-4 h-4 rounded border-slate-600 bg-[#0B0F17] text-blue-600 focus:ring-blue-500"
+                      />
+                      <div>
+                        <span className="block text-sm font-medium text-slate-200">
+                          Recursively Search Capture Folder?
+                        </span>
+                        <span className="block text-xs text-slate-400 mt-0.5 leading-relaxed">
+                          Off by default so ReplaySlice only checks the top-level capture folder and won&apos;t crawl huge subfolder trees if pointed at a main or root directory.{' '}
+                          <strong className="text-slate-200 font-semibold">Essential for NVIDIA Replay</strong>, since NVIDIA Replay saves clips into game-specific folders.
+                        </span>
+                      </div>
                     </label>
-                    <input
-                      id="cfg-out-dir"
-                      type="text"
-                      value={settings.outputDir}
-                      onChange={(e) => updateField('outputDir', e.target.value)}
-                      placeholder="C:\Users\You\Videos\Trimmed Replays"
-                      className="w-full bg-[#0B0F17] border border-slate-700/90 focus:border-blue-500 rounded-lg px-3 py-2 text-sm font-mono text-slate-100 outline-none transition-colors"
-                    />
-                    <p className="text-xs text-slate-500">
-                      Where trimmed clips are written and opened by Open Output Directory.
-                    </p>
-                  </div>
-
-                  <div className="flex flex-col gap-1.5">
-                    <label htmlFor="cfg-ffmpeg" className="text-xs font-medium text-slate-300">
-                      FFmpeg Path (Optional)
-                    </label>
-                    <input
-                      id="cfg-ffmpeg"
-                      type="text"
-                      value={settings.ffmpegPath}
-                      onChange={(e) => updateField('ffmpegPath', e.target.value)}
-                      placeholder="Leave blank to use system PATH"
-                      className="w-full bg-[#0B0F17] border border-slate-700/90 focus:border-blue-500 rounded-lg px-3 py-2 text-sm font-mono text-slate-100 outline-none transition-colors"
-                    />
-                    <p className="text-xs text-slate-500">
-                      Auto-detects FFmpeg &amp; FFprobe in PATH; throws an error if missing.
-                    </p>
                   </div>
                 </div>
               )}

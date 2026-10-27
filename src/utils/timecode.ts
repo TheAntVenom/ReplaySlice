@@ -125,6 +125,8 @@ export function computeReplayTrimPlan(params: {
   outputDir: string;
   masterFileBaseName?: string;
   keyframeGopSeconds?: number;
+  audioTracksMode?: 'all' | 'custom';
+  audioTracks?: number[];
 }): TrimCalculationResult {
   const {
     requestedSeconds,
@@ -134,6 +136,8 @@ export function computeReplayTrimPlan(params: {
     outputDir,
     masterFileBaseName = 'Replay_2026-10-23_19-42-18',
     keyframeGopSeconds = 2,
+    audioTracksMode = 'all',
+    audioTracks = [],
   } = params;
 
   const alignedEndSeconds = Math.max(0.5, masterElapsedSeconds);
@@ -168,7 +172,22 @@ export function computeReplayTrimPlan(params: {
   const masterFullPath = `${cleanSourceDir}${sep}${masterFileBaseName}.mp4`;
   const outputFullPath = `${cleanOutDir}${sep}${outputFileName}`;
 
-  const ffmpegCommand = `${resolvedFfmpeg} -hide_banner -loglevel error -y -ss ${keyframeStartSeconds.toFixed(3)} -to ${alignedEndSeconds.toFixed(3)} -i "${masterFullPath}" -map 0:v -map 0:a? -c copy -avoid_negative_ts make_zero -shortest "${outputFullPath}"`;
+  const validCustomTracks = Array.from(
+    new Set(audioTracks.filter((n) => Number.isInteger(n) && n >= 1 && n <= 6))
+  ).sort((a, b) => a - b);
+
+  let audioMapClause = '-map 0:a?';
+  let shortestFlag = ' -shortest';
+  if (audioTracksMode === 'custom') {
+    if (validCustomTracks.length === 0) {
+      audioMapClause = '-an';
+      shortestFlag = '';
+    } else {
+      audioMapClause = validCustomTracks.map((t) => `-map 0:a:${t - 1}?`).join(' ');
+    }
+  }
+
+  const ffmpegCommand = `${resolvedFfmpeg} -hide_banner -loglevel error -y -ss ${keyframeStartSeconds.toFixed(3)} -to ${alignedEndSeconds.toFixed(3)} -i "${masterFullPath}" -map 0:v ${audioMapClause} -c copy -avoid_negative_ts make_zero${shortestFlag} "${outputFullPath}"`;
 
   return {
     alignedEndSeconds,

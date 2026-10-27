@@ -85,6 +85,8 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     minFloorInput: '',
     resetDurationInput: '00:30',
     openAfterSaveMode: 'global',
+    audioTracksMode: 'all',
+    audioTracks: [],
     fontSizeBoost: 0,
     bgImagePath: '',
     bgImagePreviewUrl: null,
@@ -103,6 +105,8 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     minFloorInput: '',
     resetDurationInput: '00:30',
     openAfterSaveMode: 'global',
+    audioTracksMode: 'all',
+    audioTracks: [],
     fontSizeBoost: 0,
     bgImagePath: '',
     bgImagePreviewUrl: null,
@@ -120,6 +124,8 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     minFloorInput: '',
     resetDurationInput: '00:30',
     openAfterSaveMode: 'open',
+    audioTracksMode: 'all',
+    audioTracks: [],
     fontSizeBoost: 0,
     bgImagePath: '',
     bgImagePreviewUrl: null,
@@ -137,6 +143,8 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     minFloorInput: '',
     resetDurationInput: '00:30',
     openAfterSaveMode: 'global',
+    audioTracksMode: 'all',
+    audioTracks: [],
     fontSizeBoost: 8,
     bgImagePath: '',
     bgImagePreviewUrl: null,
@@ -154,6 +162,8 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     minFloorInput: '',
     resetDurationInput: '00:30',
     openAfterSaveMode: 'global',
+    audioTracksMode: 'all',
+    audioTracks: [],
     fontSizeBoost: 12,
     bgImagePath: '',
     bgImagePreviewUrl: null,
@@ -171,6 +181,8 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     minFloorInput: '',
     resetDurationInput: '00:30',
     openAfterSaveMode: 'global',
+    audioTracksMode: 'all',
+    audioTracks: [],
     fontSizeBoost: 12,
     bgImagePath: '',
     bgImagePreviewUrl: null,
@@ -188,6 +200,8 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     minFloorInput: '',
     resetDurationInput: '00:30',
     openAfterSaveMode: 'global',
+    audioTracksMode: 'all',
+    audioTracks: [],
     fontSizeBoost: 0,
     bgImagePath: '',
     bgImagePreviewUrl: null,
@@ -205,6 +219,8 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     minFloorInput: '',
     resetDurationInput: '00:30',
     openAfterSaveMode: 'global',
+    audioTracksMode: 'all',
+    audioTracks: [],
     fontSizeBoost: 0,
     bgImagePath: '',
     bgImagePreviewUrl: null,
@@ -222,6 +238,8 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     minFloorInput: '',
     resetDurationInput: '00:30',
     openAfterSaveMode: 'global',
+    audioTracksMode: 'all',
+    audioTracks: [],
     fontSizeBoost: 0,
     bgImagePath: '',
     bgImagePreviewUrl: null,
@@ -406,6 +424,8 @@ export function StreamDeckEmulator({
         mainCapturesDir: settings.mainCapturesDir,
         outputDir: settings.outputDir,
         masterFileBaseName: baseName,
+        audioTracksMode: slot.audioTracksMode,
+        audioTracks: slot.audioTracks,
       });
 
       flashSlotBadge(slot.slotIndex, 'ok');
@@ -422,6 +442,13 @@ export function StreamDeckEmulator({
         noteParts.push(
           `Sliced ${formatPreciseTimestamp(plan.keyframeStartSeconds)} → ${formatPreciseTimestamp(plan.alignedEndSeconds)} (stream copy, A/V aligned).`
         );
+      }
+      if (slot.audioTracksMode === 'custom') {
+        if (slot.audioTracks.length === 0) {
+          noteParts.push('Audio tracks: None (muted video-only clip).');
+        } else {
+          noteParts.push(`Audio tracks kept: ${slot.audioTracks.join(', ')}.`);
+        }
       }
       if (settings.deleteOriginal) {
         noteParts.push('Deleted original master capture.');
@@ -607,7 +634,7 @@ export function StreamDeckEmulator({
 
   const assignActionToSelectedSlot = (actionType: StreamDeckActionType | null) => {
     if (!actionType) {
-      updateSelectedSlot({ actionType: null, userTitle: '', fontSizeBoost: 0 });
+      updateSelectedSlot({ actionType: null, userTitle: '', fontSizeBoost: 0, audioTracksMode: 'all', audioTracks: [] });
       return;
     }
     const meta = ACTION_CATALOG.find((a) => a.type === actionType);
@@ -620,6 +647,26 @@ export function StreamDeckEmulator({
       userTitle: isAutoLabel ? '' : meta?.defaultTitle ?? '',
       titleFontSize: isAutoLabel ? 16 : 13,
       fontSizeBoost: 0,
+      audioTracksMode: 'all',
+      audioTracks: [],
+    });
+  };
+
+  const toggleSlotAudioTrack = (trackNum: number) => {
+    if (selectedSlot.audioTracksMode !== 'custom') {
+      updateSelectedSlot({
+        audioTracksMode: 'custom',
+        audioTracks: [trackNum],
+      });
+      return;
+    }
+    const exists = selectedSlot.audioTracks.includes(trackNum);
+    const nextTracks = exists
+      ? selectedSlot.audioTracks.filter((t) => t !== trackNum)
+      : [...selectedSlot.audioTracks, trackNum].sort((a, b) => a - b);
+    updateSelectedSlot({
+      audioTracksMode: 'custom',
+      audioTracks: nextTracks,
     });
   };
 
@@ -986,19 +1033,10 @@ export function StreamDeckEmulator({
                   </div>
 
                   {selectedSlot.actionType === StreamDeckActionType.DYNAMIC_LENGTH && (
-                    <div className="space-y-1">
-                      <p className="text-xs font-mono tabular-nums text-slate-300">
-                        Active Dynamic Length: {formatDynamicButtonTitle(dynamicSeconds)} · Fail timer:{' '}
-                        <span className="text-slate-100 font-semibold">
-                          {calculateFailTimeoutSeconds(dynamicSeconds)}s
-                        </span>{' '}
-                        (10s + 2s per 5m)
-                      </p>
-                      <p className="text-xs text-slate-500 leading-relaxed">
-                        Stream Deck&apos;s native font, size, alignment, color, and background image apply directly to{' '}
-                        <span className="font-mono text-slate-300">setTitle()</span> updates as long as Title Text is left empty.
-                      </p>
-                    </div>
+                    <p className="text-xs text-slate-500 leading-relaxed">
+                      Stream Deck&apos;s native font, size, alignment, color, and background image apply directly to{' '}
+                      <span className="font-mono text-slate-300">setTitle()</span> updates as long as Title Text is left empty.
+                    </p>
                   )}
                 </div>
 
@@ -1028,28 +1066,77 @@ export function StreamDeckEmulator({
 
                     {(selectedSlot.actionType === StreamDeckActionType.FIXED_LENGTH ||
                       selectedSlot.actionType === StreamDeckActionType.DYNAMIC_LENGTH) && (
-                      <div className="space-y-1.5 pt-1">
-                        <label htmlFor="slot-open-mode" className="text-xs font-medium text-slate-300">
-                          After Saving Clip (This Button)
-                        </label>
-                        <select
-                          id="slot-open-mode"
-                          value={selectedSlot.openAfterSaveMode}
-                          onChange={(e) =>
-                            updateSelectedSlot({ openAfterSaveMode: e.target.value as OpenAfterSaveMode })
-                          }
-                          className="w-full bg-[#131924] border border-slate-700 focus:border-blue-500 rounded-lg px-3 py-2 text-xs text-slate-100 outline-none"
-                        >
-                          <option value="global">
-                            Follow Global Setting ({settings.openAfterSave ? 'Currently On' : 'Currently Off'})
-                          </option>
-                          <option value="open">Always open clip on this button</option>
-                          <option value="never">Never open clip on this button</option>
-                        </select>
-                        <p className="text-xs text-slate-500">
-                          Saved independently on this key so you can mix silent-save and instant-review buttons.
-                        </p>
-                      </div>
+                      <>
+                        <div className="space-y-1.5 pt-1">
+                          <label htmlFor="slot-open-mode" className="text-xs font-medium text-slate-300">
+                            After Saving Clip (This Button)
+                          </label>
+                          <select
+                            id="slot-open-mode"
+                            value={selectedSlot.openAfterSaveMode}
+                            onChange={(e) =>
+                              updateSelectedSlot({ openAfterSaveMode: e.target.value as OpenAfterSaveMode })
+                            }
+                            className="w-full bg-[#131924] border border-slate-700 focus:border-blue-500 rounded-lg px-3 py-2 text-xs text-slate-100 outline-none"
+                          >
+                            <option value="global">
+                              Follow Global Setting ({settings.openAfterSave ? 'Currently On' : 'Currently Off'})
+                            </option>
+                            <option value="open">Always open clip on this button</option>
+                            <option value="never">Never open clip on this button</option>
+                          </select>
+                          <p className="text-xs text-slate-500">
+                            Saved independently on this key so you can mix silent-save and instant-review buttons.
+                          </p>
+                        </div>
+
+                        <div className="space-y-1.5 pt-1">
+                          <span className="block text-xs font-medium text-slate-300">
+                            Audio Tracks to Keep (This Button)
+                          </span>
+                          <div className="grid grid-cols-7 gap-1.5" role="group" aria-label="Audio tracks to keep">
+                            <button
+                              type="button"
+                              onClick={() => updateSelectedSlot({ audioTracksMode: 'all', audioTracks: [] })}
+                              className={`py-1.5 text-xs font-semibold rounded-md border transition-colors cursor-pointer ${
+                                selectedSlot.audioTracksMode === 'all'
+                                  ? 'bg-blue-600 border-blue-500 text-white'
+                                  : 'bg-[#131924] border-slate-700 text-slate-300 hover:bg-slate-800'
+                              }`}
+                            >
+                              All
+                            </button>
+                            {[1, 2, 3, 4, 5, 6].map((trackNum) => {
+                              const isTrackSelected =
+                                selectedSlot.audioTracksMode === 'custom' &&
+                                selectedSlot.audioTracks.includes(trackNum);
+                              return (
+                                <button
+                                  key={trackNum}
+                                  type="button"
+                                  onClick={() => toggleSlotAudioTrack(trackNum)}
+                                  className={`py-1.5 text-xs font-mono tabular-nums font-semibold rounded-md border transition-colors cursor-pointer ${
+                                    isTrackSelected
+                                      ? 'bg-blue-600 border-blue-500 text-white'
+                                      : 'bg-[#131924] border-slate-700 text-slate-300 hover:bg-slate-800'
+                                  }`}
+                                >
+                                  {trackNum}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <p className="text-xs text-slate-500 leading-relaxed">
+                            {selectedSlot.audioTracksMode === 'all'
+                              ? 'Keeps all audio tracks in the recording (default · pure stream copy, zero re-encoding).'
+                              : selectedSlot.audioTracks.length === 0
+                                ? 'No audio tracks selected — saves a muted (video-only) clip via stream copy.'
+                                : selectedSlot.audioTracks.length === 1
+                                  ? `Keeps Audio Track ${selectedSlot.audioTracks[0]} only (stream copy · missing track safely outputs a muted clip).`
+                                  : `Keeps Audio Tracks ${selectedSlot.audioTracks.join(', ')} (stream copy · missing tracks safely skipped).`}
+                          </p>
+                        </div>
+                      </>
                     )}
 
                     {(selectedSlot.actionType === StreamDeckActionType.DYNAMIC_INCREASE ||

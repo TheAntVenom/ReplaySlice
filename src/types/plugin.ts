@@ -9,12 +9,14 @@ export enum StreamDeckActionType {
 }
 
 export type OpenAfterSaveMode = 'global' | 'open' | 'never';
+export type AudioTracksMode = 'all' | 'custom';
 
 export interface GlobalPluginSettings {
   openAfterSave: boolean;
   deleteOriginal: boolean;
   masterHotkey: string;
   mainCapturesDir: string;
+  recursiveSearchCaptures: boolean;
   outputDir: string;
   ffmpegPath: string;
   successSoundPath: string;
@@ -35,7 +37,9 @@ export interface DeckKeySlot {
   minFloorInput: string; // Optional per-button minimum floor for DYNAMIC_DECREASE (blank = auto)
   resetDurationInput: string; // Per-button target duration for RESET_DYNAMIC_LENGTH (default 00:30)
   openAfterSaveMode: OpenAfterSaveMode; // Per-button override on Fixed & Dynamic Length ('global' | 'open' | 'never')
-  fontSizeBoost: number; // 0 = native Stream Deck text; +1..+50 = boosted SVG text using Stream Deck's font
+  audioTracksMode: AudioTracksMode; // Per-button audio track filter ('all' default | 'custom' tracks 1-6)
+  audioTracks: number[]; // Selected 1-based audio tracks (1..6) when audioTracksMode === 'custom'
+  fontSizeBoost: number; // 0 = native Stream Deck text; +1..+56 = boosted SVG text using Stream Deck's font
   bgImagePath: string; // Optional PNG/JPG file path composited behind boosted text
   bgImagePreviewUrl: string | null; // Optional local object URL for previewing PNG background in web emulator
   customBoostText: string; // Optional custom text override when fontSizeBoost > 0

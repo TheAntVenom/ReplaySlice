@@ -1,7 +1,7 @@
 import { GeneratedPluginFile, GlobalPluginSettings } from '../types/plugin';
 
 export const PLUGIN_UUID = 'com.antvenom.replayslice';
-export const PLUGIN_VERSION = '1.0.3';
+export const PLUGIN_VERSION = '1.0.4';
 export const SD_PLUGIN_FOLDER = `${PLUGIN_UUID}.sdPlugin`;
 
 export function generateManifestJson(): string {
@@ -144,6 +144,7 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
       deleteOriginal: defaults.deleteOriginal ?? true,
       masterHotkey: defaults.masterHotkey || 'Alt+F10',
       mainCapturesDir: defaults.mainCapturesDir || '',
+      recursiveSearchCaptures: defaults.recursiveSearchCaptures ?? false,
       outputDir: defaults.outputDir || '',
       ffmpegPath: defaults.ffmpegPath || '',
       successSoundPath: defaults.successSoundPath || '',
@@ -658,11 +659,24 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '}',
     '',
     '// ---------------------------------------------------------------------------',
-    '// 6. Recursive Directory Snapshot & Write-Lock Readiness Poll',
+    '// 6. Capture Directory Snapshot & Write-Lock Readiness Poll',
     '// ---------------------------------------------------------------------------',
-    'function scanVideoFilesRecursive(rootDir, excludedDirResolved) {',
+    'const IGNORED_SYSTEM_DIRS = new Set([',
+    '  "$recycle.bin",',
+    '  "system volume information",',
+    '  "windows",',
+    '  "program files",',
+    '  "program files (x86)",',
+    '  "programdata",',
+    '  "appdata",',
+    '  "node_modules",',
+    '  "library",',
+    ']);',
+    'const MAX_RECURSIVE_DEPTH = 4;',
+    '',
+    'function scanVideoFiles(rootDir, excludedDirResolved, recursive = false) {',
     '  const found = new Map();',
-    '  function walk(dir) {',
+    '  function walk(dir, depth) {',
     '    let entries;',
     '    try {',
     '      entries = fs.readdirSync(dir, { withFileTypes: true });',
@@ -674,8 +688,10 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '      const fullPath = path.join(dir, entry.name);',
     '      const resolved = path.resolve(fullPath);',
     '      if (entry.isDirectory()) {',
+    '        if (!recursive || depth >= MAX_RECURSIVE_DEPTH) continue;',
+    '        if (IGNORED_SYSTEM_DIRS.has(entry.name.toLowerCase())) continue;',
     '        if (excludedDirResolved && resolved.toLowerCase() === excludedDirResolved.toLowerCase()) continue;',
-    '        walk(fullPath);',
+    '        walk(fullPath, depth + 1);',
     '      } else if (entry.isFile()) {',
     '        const ext = path.extname(entry.name).toLowerCase();',
     '        if (!VIDEO_EXTENSIONS.has(ext)) continue;',
@@ -686,7 +702,7 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '      }',
     '    }',
     '  }',
-    '  walk(rootDir);',
+    '  walk(rootDir, 0);',
     '  return found;',
     '}',
     '',
@@ -708,13 +724,13 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '  return new Promise((r) => setTimeout(r, ms));',
     '}',
     '',
-    'async function waitForReadyMasterClip(mainCapturesDir, excludedOutDir, baselineMap, triggerEpochMs, deadlineEpochMs) {',
+    'async function waitForReadyMasterClip(mainCapturesDir, excludedOutDir, baselineMap, triggerEpochMs, deadlineEpochMs, recursive = false) {',
     '  let trackedPath = "";',
     '  let lastSize = -1;',
     '  let stableTicks = 0;',
     '',
     '  while (Date.now() < deadlineEpochMs) {',
-    '    const currentMap = scanVideoFilesRecursive(mainCapturesDir, excludedOutDir);',
+    '    const currentMap = scanVideoFiles(mainCapturesDir, excludedOutDir, recursive);',
     '    let newestCandidate = null;',
     '',
     '    for (const [resolvedPath, info] of currentMap.entries()) {',
@@ -756,10 +772,11 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '// ---------------------------------------------------------------------------',
     '// 7. FFprobe Stream-Length Inspection & Keyframe-Aligned Stream Copy',
     '// ---------------------------------------------------------------------------',
-    'async function probeAlignedDurationAndKeyframe(ffmpegBin, ffprobeBin, masterFile, requestedSeconds) {',
+    'async function probeAlignedDurationAndKeyframe(ffmpegBin, ffprobeBin, masterFile, requestedSeconds, audioSelection) {',
     '  let formatDur = 0;',
     '  const videoDurs = [];',
     '  const audioDurs = [];',
+    '  let totalAudioStreams = 0;',
     '',
     '  if (ffprobeBin) {',
     '    const { stdout } = await execFilePromise(',
@@ -773,10 +790,16 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '      if (Number.isFinite(d) && d > 0) formatDur = d;',
     '    }',
     '    for (const s of meta.streams || []) {',
-    '      const sd = Number(s.duration);',
-    '      if (!Number.isFinite(sd) || sd <= 0) continue;',
-    '      if (s.codec_type === "video") videoDurs.push(sd);',
-    '      if (s.codec_type === "audio") audioDurs.push(sd);',
+    '      if (s.codec_type === "video") {',
+    '        const sd = Number(s.duration);',
+    '        if (Number.isFinite(sd) && sd > 0) videoDurs.push(sd);',
+    '      } else if (s.codec_type === "audio") {',
+    '        const trackNumber = totalAudioStreams + 1;',
+    '        totalAudioStreams += 1;',
+    '        const includeTrack = !audioSelection || audioSelection.mode !== "custom" || audioSelection.tracks.includes(trackNumber);',
+    '        const sd = Number(s.duration);',
+    '        if (includeTrack && Number.isFinite(sd) && sd > 0) audioDurs.push(sd);',
+    '      }',
     '    }',
     '  } else {',
     '    // Fallback: parse Duration: HH:MM:SS.xx from ffmpeg -i stderr',
@@ -803,7 +826,7 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '',
     '  // Short-buffer check: if requested clip is >= actual master buffer duration, clamp start to 0',
     '  if (alignedEnd <= requestedSeconds) {',
-    '    return { alignedEnd, trimStart: 0, wasClamped: true };',
+    '    return { alignedEnd, trimStart: 0, wasClamped: true, totalAudioStreams };',
     '  }',
     '',
     '  const idealStart = alignedEnd - requestedSeconds;',
@@ -840,7 +863,7 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '    }',
     '  }',
     '',
-    '  return { alignedEnd, trimStart: keyframeStart, wasClamped: false };',
+    '  return { alignedEnd, trimStart: keyframeStart, wasClamped: false, totalAudioStreams };',
     '}',
     '',
     'function buildUniqueOutputPath(outputDir, masterFile, requestedSeconds) {',
@@ -1170,6 +1193,23 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '  return Boolean(globalSettings.openAfterSave);',
     '}',
     '',
+    'function resolveAudioTrackSelection(btnSettings) {',
+    '  const mode = (btnSettings && btnSettings.audioTracksMode === "custom") ? "custom" : "all";',
+    '  if (mode !== "custom") return { mode: "all", tracks: [] };',
+    '  const raw = Array.isArray(btnSettings.audioTracks) ? btnSettings.audioTracks : [1];',
+    '  const seen = new Set();',
+    '  const tracks = [];',
+    '  for (const item of raw) {',
+    '    const n = Number(item);',
+    '    if (Number.isInteger(n) && n >= 1 && n <= 6 && !seen.has(n)) {',
+    '      seen.add(n);',
+    '      tracks.push(n);',
+    '    }',
+    '  }',
+    '  tracks.sort((a, b) => a - b);',
+    '  return { mode: "custom", tracks };',
+    '}',
+    '',
     'function applyDynamicStepOnce(action, context, incomingSettings, persistNow) {',
     '  const cached = (visibleContexts.get(context) || {}).settings || {};',
     '  const btnSettings = { ...cached, ...(incomingSettings || {}) };',
@@ -1288,7 +1328,7 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '  }',
     '}',
     '',
-    'async function executeCaptureFlow(context, requestedSeconds, openAfterSave = false) {',
+    'async function executeCaptureFlow(context, requestedSeconds, openAfterSave = false, audioSelection = { mode: "all", tracks: [] }) {',
     '  const now = Date.now();',
     '  // 2-second debounce strictly on capture buttons',
     '  if (now - lastCaptureTriggerAt < DEBOUNCE_MS || captureInFlight) {',
@@ -1324,26 +1364,43 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '    const excludeOut = resolvedOut !== resolvedMain ? resolvedOut : "";',
     '',
     '    // 3) Snapshot pre-existing files & send Master Instant Replay hotkey',
-    '    const baseline = scanVideoFilesRecursive(mainDir, excludeOut);',
+    '    const useRecursive = Boolean(globalSettings.recursiveSearchCaptures);',
+    '    const baseline = scanVideoFiles(mainDir, excludeOut, useRecursive);',
     '    const triggerEpoch = Date.now();',
-    '    writeLog("INFO", "Sending master replay hotkey", { hotkey: globalSettings.masterHotkey, requestedSeconds, failTimeoutSec });',
+    '    writeLog("INFO", "Sending master replay hotkey", { hotkey: globalSettings.masterHotkey, requestedSeconds, failTimeoutSec, recursive: useRecursive });',
     '    await injectMasterHotkey(globalSettings.masterHotkey);',
     '',
     '    // 4) Wait for master clip to be written AND fully flushed/unlocked',
-    '    const masterFile = await waitForReadyMasterClip(mainDir, excludeOut, baseline, triggerEpoch, overallDeadline);',
+    '    const masterFile = await waitForReadyMasterClip(mainDir, excludeOut, baseline, triggerEpoch, overallDeadline, useRecursive);',
     '    writeLog("INFO", "Master replay clip ready", masterFile);',
     '',
     '    // 5) Probe actual elapsed master duration & keyframe start',
-    '    const { alignedEnd, trimStart, wasClamped } = await probeAlignedDurationAndKeyframe(',
+    '    const { alignedEnd, trimStart, wasClamped, totalAudioStreams } = await probeAlignedDurationAndKeyframe(',
     '      ffmpegBin,',
     '      ffprobeBin,',
     '      masterFile,',
-    '      requestedSeconds',
+    '      requestedSeconds,',
+    '      audioSelection',
     '    );',
     '',
     '    // 6) Trim with FFmpeg (-c copy, zero re-encoding, aligned audio/video streams)',
     '    outputFileCreated = buildUniqueOutputPath(outDir, masterFile, requestedSeconds);',
     '    const remainingMs = Math.max(15000, overallDeadline - Date.now());',
+    '',
+    '    const audioMapArgs = [];',
+    '    let includeShortest = true;',
+    '    if (audioSelection && audioSelection.mode === "custom") {',
+    '      if (!audioSelection.tracks || audioSelection.tracks.length === 0) {',
+    '        audioMapArgs.push("-an");',
+    '        includeShortest = false;',
+    '      } else {',
+    '        for (const trackNum of audioSelection.tracks) {',
+    '          audioMapArgs.push("-map", `0:a:${trackNum - 1}?`);',
+    '        }',
+    '      }',
+    '    } else {',
+    '      audioMapArgs.push("-map", "0:a?");',
+    '    }',
     '',
     '    const ffmpegArgs = [',
     '      "-hide_banner",',
@@ -1353,14 +1410,22 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '      "-to", alignedEnd.toFixed(3),',
     '      "-i", masterFile,',
     '      "-map", "0:v",',
-    '      "-map", "0:a?",',
+    '      ...audioMapArgs,',
     '      "-c", "copy",',
     '      "-avoid_negative_ts", "make_zero",',
-    '      "-shortest",',
+    '      ...(includeShortest ? ["-shortest"] : []),',
     '      outputFileCreated,',
     '    ];',
     '',
-    '    writeLog("INFO", "Running FFmpeg stream-copy trim", { trimStart, alignedEnd, wasClamped, outputFileCreated });',
+    '    writeLog("INFO", "Running FFmpeg stream-copy trim", {',
+    '      trimStart,',
+    '      alignedEnd,',
+    '      wasClamped,',
+    '      audioMode: audioSelection ? audioSelection.mode : "all",',
+    '      requestedAudioTracks: audioSelection ? audioSelection.tracks : [],',
+    '      detectedAudioStreams: totalAudioStreams,',
+    '      outputFileCreated,',
+    '    });',
     '    await execFilePromise(ffmpegBin, ffmpegArgs, remainingMs);',
     '',
     '    // 7) Verify trimmed clip actually exists and is non-empty on disk',
@@ -1577,16 +1642,18 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '      const btnSettings = { ...cached, ...incoming };',
     '      const fixedSec = Math.max(1, parseTimecodeToSeconds(btnSettings.fixedDuration || "00:30", 30));',
     '      const openAfterSave = resolveShouldOpenAfterSave(btnSettings);',
-    '      writeLog("INFO", "Fixed Length button pressed", { context, fixedSec, openAfterSave });',
-    '      executeCaptureFlow(context, fixedSec, openAfterSave);',
+    '      const audioSelection = resolveAudioTrackSelection(btnSettings);',
+    '      writeLog("INFO", "Fixed Length button pressed", { context, fixedSec, openAfterSave, audioSelection });',
+    '      executeCaptureFlow(context, fixedSec, openAfterSave, audioSelection);',
     '    } else if (action === ACTION_DYNAMIC) {',
     '      const cached = (visibleContexts.get(context) || {}).settings || {};',
     '      const incoming = (payload && payload.settings) || {};',
     '      const btnSettings = { ...cached, ...incoming };',
     '      const dynSec = Math.max(1, Number(globalSettings.dynamicCurrentSeconds) || 60);',
     '      const openAfterSave = resolveShouldOpenAfterSave(btnSettings);',
-    '      writeLog("INFO", "Dynamic Length button pressed", { context, dynSec, openAfterSave });',
-    '      executeCaptureFlow(context, dynSec, openAfterSave);',
+    '      const audioSelection = resolveAudioTrackSelection(btnSettings);',
+    '      writeLog("INFO", "Dynamic Length button pressed", { context, dynSec, openAfterSave, audioSelection });',
+    '      executeCaptureFlow(context, dynSec, openAfterSave, audioSelection);',
     '    } else if (action === ACTION_INCREASE || action === ACTION_DECREASE) {',
     '      startHoldRepeat(action, context, payload && payload.settings);',
     '    } else if (action === ACTION_RESET) {',
@@ -1617,6 +1684,7 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
     deleteOriginal: defaults.deleteOriginal ?? true,
     masterHotkey: defaults.masterHotkey || 'Alt+F10',
     mainCapturesDir: defaults.mainCapturesDir || '',
+    recursiveSearchCaptures: defaults.recursiveSearchCaptures ?? false,
     outputDir: defaults.outputDir || '',
     ffmpegPath: defaults.ffmpegPath || '',
     successSoundPath: defaults.successSoundPath || '',
@@ -1750,6 +1818,36 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       padding: 10px 10px 8px;
       border-top: 1px solid #3D3D3D;
     }
+    .track-selector {
+      display: grid;
+      grid-template-columns: 1.35fr repeat(6, 1fr);
+      gap: 4px;
+      margin-top: 2px;
+    }
+    .track-btn {
+      background: #363636;
+      border: 1px solid #4D4D4D;
+      border-radius: 4px;
+      color: #BDBDBD;
+      padding: 5px 0;
+      font-size: 11px;
+      font-weight: 600;
+      text-align: center;
+      cursor: pointer;
+      transition: background 0.1s ease, border-color 0.1s ease, color 0.1s ease;
+    }
+    .track-btn:hover {
+      background: #444444;
+      color: #F0F0F0;
+    }
+    .track-btn.active {
+      background: #2563EB;
+      border-color: #3B82F6;
+      color: #FFFFFF;
+    }
+    .track-btn.active:hover {
+      background: #1D4ED8;
+    }
   </style>
 </head>
 <body>
@@ -1764,7 +1862,6 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
     </div>
 
     <div id="dynamicOnlyRow" class="row hidden">
-      <div id="dynamicDurationHint" class="hint">Current Dynamic Length: 60s · Fail timer: 10s</div>
       <div class="hint">
         Use Stream Deck's native Title bar above to choose your preferred font, size, color, and position. Leave the Title text box empty so ReplaySlice can update the live duration automatically.
       </div>
@@ -1780,6 +1877,20 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
         <option value="open">Always open clip on this button</option>
         <option value="never">Never open clip on this button</option>
       </select>
+    </div>
+
+    <div id="audioTracksWrap" class="row hidden">
+      <label>Audio Tracks to Keep (This Button)</label>
+      <div class="track-selector" role="group" aria-label="Audio tracks to keep">
+        <button type="button" id="audioTrackAllBtn" class="track-btn active">All</button>
+        <button type="button" class="track-btn" data-track-num="1">1</button>
+        <button type="button" class="track-btn" data-track-num="2">2</button>
+        <button type="button" class="track-btn" data-track-num="3">3</button>
+        <button type="button" class="track-btn" data-track-num="4">4</button>
+        <button type="button" class="track-btn" data-track-num="5">5</button>
+        <button type="button" class="track-btn" data-track-num="6">6</button>
+      </div>
+      <div id="audioTracksHint" class="hint">Keeps all audio tracks in the recording (default · stream copy)</div>
     </div>
 
     <div id="stepOnlyRow" class="row hidden">
@@ -1866,7 +1977,15 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
           <input id="mainCapturesDir" type="text" placeholder="C:\\Users\\You\\Videos\\Captures" />
           <button type="button" data-browse-folder="mainCapturesDir" data-title="Select Main Captures Directory">Browse</button>
         </div>
-        <div class="hint">Watches root folder and game subfolders automatically</div>
+        <div id="mainCapturesDirHint" class="hint">Watches only this top-level folder (subfolders ignored)</div>
+      </div>
+
+      <label class="checkbox-row" style="margin: 2px 0 4px;">
+        <input id="recursiveSearchCaptures" type="checkbox" />
+        <span>Recursively Search Capture Folder?</span>
+      </label>
+      <div class="hint" style="margin: 0 0 12px 22px;">
+        Off by default so ReplaySlice won't crawl huge subfolder trees if pointed at a main or root directory. <strong>Essential for NVIDIA Replay</strong>, since NVIDIA Replay saves clips into game-specific folders.
       </div>
 
       <div class="row">
@@ -1963,12 +2082,42 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       minFloor: "",
       resetDuration: "00:30",
       openAfterSaveMode: "global",
+      audioTracksMode: "all",
+      audioTracks: [],
       fontSizeBoost: 0,
       bgImagePath: "",
       customBoostText: ""
     };
     let recordingHotkey = false;
     let isApplyingMenuState = false;
+
+    function normalizeAudioTracks(rawTracks) {
+      if (!Array.isArray(rawTracks)) return [];
+      const seen = new Set();
+      const out = [];
+      for (const item of rawTracks) {
+        const n = Number(item);
+        if (Number.isInteger(n) && n >= 1 && n <= 6 && !seen.has(n)) {
+          seen.add(n);
+          out.push(n);
+        }
+      }
+      out.sort((a, b) => a - b);
+      return out;
+    }
+
+    function renderAudioTrackButtons() {
+      const isCustom = actionState.audioTracksMode === "custom";
+      const selected = normalizeAudioTracks(actionState.audioTracks);
+      const allBtn = document.getElementById("audioTrackAllBtn");
+      if (allBtn) {
+        allBtn.classList.toggle("active", !isCustom);
+      }
+      document.querySelectorAll("[data-track-num]").forEach((btn) => {
+        const num = Number(btn.getAttribute("data-track-num"));
+        btn.classList.toggle("active", isCustom && selected.includes(num));
+      });
+    }
 
     function loadRememberedMenuState(fromGlobal) {
       let local = null;
@@ -2050,12 +2199,22 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       document.getElementById("fixedDurationHint").textContent =
         "Saves the last " + fixedSec + "s (" + formatDisplayDuration(fixedSec) + ") · Fail timer: " + fixedFail + "s (10s + 2s per 5m)";
 
-      const dynSec = Math.max(1, Number(globalState.dynamicCurrentSeconds) || 60);
-      const dynFail = computeFailSeconds(dynSec);
-      const dynHint = document.getElementById("dynamicDurationHint");
-      if (dynHint) {
-        dynHint.textContent =
-          "Current Dynamic Length: " + dynSec + "s (" + formatDisplayDuration(dynSec) + ") · Fail timer: " + dynFail + "s (10s + 2s per 5m)";
+      const audioHint = document.getElementById("audioTracksHint");
+      if (audioHint) {
+        if (actionState.audioTracksMode !== "custom") {
+          audioHint.textContent = "Keeps all audio tracks in the recording (default · stream copy)";
+        } else {
+          const tracks = normalizeAudioTracks(actionState.audioTracks);
+          if (tracks.length === 0) {
+            audioHint.textContent = "No audio tracks selected — saves a muted (video-only) clip";
+          } else if (tracks.length === 1) {
+            audioHint.textContent =
+              "Keeps Audio Track " + tracks[0] + " only (stream copy · missing track outputs muted clip)";
+          } else {
+            audioHint.textContent =
+              "Keeps Audio Tracks " + tracks.join(", ") + " (stream copy · missing tracks safely skipped)";
+          }
+        }
       }
 
       const stepSec = Math.max(1, parseTimecode(document.getElementById("stepDuration").value, 30));
@@ -2102,6 +2261,14 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
         repeatHint.textContent =
           "Holding + or - waits " + delayVal + "s, then triggers " + rateVal + "×/sec (every " + intervalMs + "ms)";
       }
+
+      const mainDirHint = document.getElementById("mainCapturesDirHint");
+      const recEl = document.getElementById("recursiveSearchCaptures");
+      if (mainDirHint && recEl) {
+        mainDirHint.textContent = recEl.checked
+          ? "Watches this folder and game subfolders recursively"
+          : "Watches only this top-level folder (subfolders ignored)";
+      }
     }
 
     function renderGlobalFields() {
@@ -2119,6 +2286,7 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       });
       document.getElementById("globalOpenAfterSave").checked = Boolean(globalState.openAfterSave);
       document.getElementById("deleteOriginal").checked = globalState.deleteOriginal !== false;
+      document.getElementById("recursiveSearchCaptures").checked = Boolean(globalState.recursiveSearchCaptures);
       document.getElementById("repeatDelaySeconds").value =
         Number.isFinite(Number(globalState.repeatDelaySeconds)) ? globalState.repeatDelaySeconds : 0.5;
       document.getElementById("repeatRateHz").value =
@@ -2144,6 +2312,7 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
         deleteOriginal: document.getElementById("deleteOriginal").checked,
         masterHotkey: document.getElementById("masterHotkey").value.trim(),
         mainCapturesDir: document.getElementById("mainCapturesDir").value.trim(),
+        recursiveSearchCaptures: document.getElementById("recursiveSearchCaptures").checked,
         outputDir: document.getElementById("outputDir").value.trim(),
         ffmpegPath: document.getElementById("ffmpegPath").value.trim(),
         successSoundPath: document.getElementById("successSoundPath").value.trim(),
@@ -2175,6 +2344,8 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       const modeVal = document.getElementById("openAfterSaveMode").value || "global";
       const rawBoost = Number(document.getElementById("fontSizeBoost").value);
       const safeBoost = Number.isFinite(rawBoost) && rawBoost > 0 ? Math.min(56, Math.round(rawBoost)) : 0;
+      const safeAudioMode = actionState.audioTracksMode === "custom" ? "custom" : "all";
+      const safeAudioTracks = safeAudioMode === "custom" ? normalizeAudioTracks(actionState.audioTracks) : [];
 
       actionState = Object.assign({}, actionState, {
         fixedDuration: document.getElementById("fixedDuration").value.trim() || "00:30",
@@ -2183,10 +2354,13 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
         resetDuration: document.getElementById("resetDuration").value.trim() || "00:30",
         openAfterSaveMode: modeVal,
         openAfterSave: modeVal === "open",
+        audioTracksMode: safeAudioMode,
+        audioTracks: safeAudioTracks,
         fontSizeBoost: safeBoost,
         bgImagePath: document.getElementById("bgImagePath").value.trim(),
         customBoostText: document.getElementById("customBoostText").value
       });
+      renderAudioTrackButtons();
       updateHints();
       if (websocket && websocket.readyState === 1) {
         websocket.send(JSON.stringify({
@@ -2228,12 +2402,18 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       document.getElementById("actionSettingsSection").classList.remove("hidden");
       const saved = (actionInfo.payload && actionInfo.payload.settings) || {};
       const initBoost = Number(saved.fontSizeBoost);
+      const initAudioMode = saved.audioTracksMode === "custom" ? "custom" : "all";
+      const initAudioTracks = initAudioMode === "custom"
+        ? normalizeAudioTracks(Array.isArray(saved.audioTracks) ? saved.audioTracks : [1])
+        : [];
       actionState = Object.assign({}, saved, {
         fixedDuration: saved.fixedDuration || "00:30",
         stepDuration: saved.stepDuration || "00:30",
         minFloor: saved.minFloor || "",
         resetDuration: saved.resetDuration || "00:30",
         openAfterSaveMode: normalizeOpenMode(saved),
+        audioTracksMode: initAudioMode,
+        audioTracks: initAudioTracks,
         fontSizeBoost: Number.isFinite(initBoost) && initBoost > 0 ? Math.min(56, Math.round(initBoost)) : 0,
         bgImagePath: saved.bgImagePath || "",
         customBoostText: saved.customBoostText || ""
@@ -2246,6 +2426,8 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       if (isFixed || isDynamic) {
         document.getElementById("openAfterSaveWrap").classList.remove("hidden");
         document.getElementById("openAfterSaveMode").value = actionState.openAfterSaveMode;
+        document.getElementById("audioTracksWrap").classList.remove("hidden");
+        renderAudioTrackButtons();
       }
       if (isFixed) {
         document.getElementById("fixedOnlyRow").classList.remove("hidden");
@@ -2287,12 +2469,20 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
         } else if (msg.event === "didReceiveSettings") {
           const incoming = (msg.payload && msg.payload.settings) || {};
           const incBoost = Number(incoming.fontSizeBoost !== undefined ? incoming.fontSizeBoost : actionState.fontSizeBoost);
+          const incAudioMode = incoming.audioTracksMode !== undefined
+            ? (incoming.audioTracksMode === "custom" ? "custom" : "all")
+            : actionState.audioTracksMode;
+          const incAudioTracks = incAudioMode === "custom"
+            ? normalizeAudioTracks(incoming.audioTracks !== undefined ? incoming.audioTracks : actionState.audioTracks)
+            : [];
           actionState = Object.assign({}, actionState, incoming, {
             fixedDuration: incoming.fixedDuration || actionState.fixedDuration || "00:30",
             stepDuration: incoming.stepDuration || actionState.stepDuration || "00:30",
             minFloor: incoming.minFloor !== undefined ? incoming.minFloor : (actionState.minFloor || ""),
             resetDuration: incoming.resetDuration || actionState.resetDuration || "00:30",
             openAfterSaveMode: normalizeOpenMode(incoming),
+            audioTracksMode: incAudioMode,
+            audioTracks: incAudioTracks,
             fontSizeBoost: Number.isFinite(incBoost) && incBoost > 0 ? Math.min(56, Math.round(incBoost)) : 0,
             bgImagePath: incoming.bgImagePath !== undefined ? incoming.bgImagePath : (actionState.bgImagePath || ""),
             customBoostText: incoming.customBoostText !== undefined ? incoming.customBoostText : (actionState.customBoostText || "")
@@ -2301,6 +2491,7 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
           document.getElementById("fontSizeBoost").value = actionState.fontSizeBoost;
           document.getElementById("bgImagePath").value = actionState.bgImagePath;
           document.getElementById("customBoostText").value = actionState.customBoostText;
+          renderAudioTrackButtons();
           if (isFixed) document.getElementById("fixedDuration").value = actionState.fixedDuration;
           if (isIncrease || isDecrease) document.getElementById("stepDuration").value = actionState.stepDuration;
           if (isDecrease) document.getElementById("minFloor").value = actionState.minFloor;
@@ -2330,6 +2521,7 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       .forEach((el) => el.addEventListener("input", persistGlobal));
     document.getElementById("globalOpenAfterSave").addEventListener("change", persistGlobal);
     document.getElementById("deleteOriginal").addEventListener("change", persistGlobal);
+    document.getElementById("recursiveSearchCaptures").addEventListener("change", persistGlobal);
     document.getElementById("enableDebugLog").addEventListener("change", persistGlobal);
 
     ["menu-appearance", "menu-dirs", "menu-sounds", "menu-repeat", "menu-diagnostics"].forEach((id) => {
@@ -2341,6 +2533,31 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
     document.querySelectorAll("#fixedDuration, #stepDuration, #minFloor, #resetDuration, #fontSizeBoost, #bgImagePath, #customBoostText")
       .forEach((el) => el.addEventListener("input", persistAction));
     document.getElementById("openAfterSaveMode").addEventListener("change", persistAction);
+
+    document.getElementById("audioTrackAllBtn").addEventListener("click", () => {
+      actionState.audioTracksMode = "all";
+      actionState.audioTracks = [];
+      persistAction();
+    });
+
+    document.querySelectorAll("[data-track-num]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const trackNum = Number(btn.getAttribute("data-track-num"));
+        if (!Number.isInteger(trackNum) || trackNum < 1 || trackNum > 6) return;
+        if (actionState.audioTracksMode !== "custom") {
+          actionState.audioTracksMode = "custom";
+          actionState.audioTracks = [trackNum];
+        } else {
+          const current = normalizeAudioTracks(actionState.audioTracks);
+          if (current.includes(trackNum)) {
+            actionState.audioTracks = current.filter((t) => t !== trackNum);
+          } else {
+            actionState.audioTracks = current.concat(trackNum).sort((a, b) => a - b);
+          }
+        }
+        persistAction();
+      });
+    });
 
     document.getElementById("boostMinusBtn").addEventListener("click", () => {
       const el = document.getElementById("fontSizeBoost");
@@ -2538,6 +2755,8 @@ Look under **ReplaySlice** in the right-hand Actions list of your Stream Deck so
 7. **Open Captures Directory** — Opens your configured Main Captures Directory in Explorer / Finder.
 
 ## Key Behaviors
+- **Per-Button Audio Track Selection (Tracks 1–6 or All)**: Both *Fixed Length* and *Dynamic Length* buttons default to **All** audio tracks (\`-map 0:a?\`), or let you toggle any custom combination of **Audio Tracks 1–6** (\`-map 0:a:0? ... -map 0:a:5?\`) via 100% pure FFmpeg stream copy (\`-c copy\`, zero re-encoding). Missing tracks are safely skipped without crashing.
+- **Optional Recursive Capture Folder Search**: Inside **Directories & FFmpeg Path**, **Recursively Search Capture Folder?** is **off by default** so pointing at a main or root folder only checks top-level files without crawling massive subfolder trees. Turn it on when using **NVIDIA Replay** (*Essential for NVIDIA Replay*, since NVIDIA saves clips into game-specific subfolders).
 - **Custom Text Size Boost & Key Background**: Every ReplaySlice button includes a collapsible **Custom Text Size & Key Background** menu in *Button Action Settings*. Leave **Font Size Boost** at \`0\` for native Stream Deck text, or dial \`+1\`, \`+2\`, … up to \`36pt+\` using the exact font, style, color, and alignment selected in Stream Deck's main UI — with an optional **Key Background Image (\`.png\` / \`.jpg\`)** picker right inside the same menu so custom PNG backgrounds work behind giant dynamic timers.
 - **Hold-to-Repeat on \`+\` / \`-\`**: Holding *Dynamic Increase* or *Dynamic Decrease* waits \`0.5s\` by default and then repeats \`5\` times per second. Both values can be customized in Global Plugin Settings under **Key Delay / Repeat**.
 - **2-Second Capture Debounce**: Rapidly pressing *Fixed Length* or *Dynamic Length* within 2 seconds ignores extra presses. *Dynamic Increase*, *Dynamic Decrease*, and *Reset Dynamic Length* are never debounced.

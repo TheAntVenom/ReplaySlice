@@ -22,6 +22,7 @@ const INITIAL_SETTINGS: GlobalPluginSettings = {
   deleteOriginal: true,
   masterHotkey: 'Alt+F10',
   mainCapturesDir: '',
+  recursiveSearchCaptures: false,
   outputDir: '',
   ffmpegPath: '',
   successSoundPath: '',
