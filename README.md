@@ -1,5 +1,7 @@
 # ReplaySlice
 
+<img width="624" height="536" alt="replayslice" src="https://github.com/user-attachments/assets/3b7442d1-a9d6-4cee-8d84-9d3d9102098f" />
+
 **Multi-length Instant Replay trimming for Elgato Stream Deck — powered by FFmpeg stream copying with zero re-encoding.**
 
 Replay recorders like **OBS Studio**, **Nvidia ShadowPlay**, and **AMD ReLive** only let you configure a single Instant Replay buffer duration. If you keep a 20-minute buffer running for safety, saving a quick 30-second highlight normally forces you to dump a massive 20-minute video file and trim it manually later.
