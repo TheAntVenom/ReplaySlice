@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { CheckCircle2, ChevronRight, FolderOpen, RotateCcw, Trash2, XCircle } from 'lucide-react';
 import {
+  BoostLine2Position,
   CaptureLogEntry,
   DeckKeySlot,
   GlobalPluginSettings,
@@ -87,10 +88,13 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     openAfterSaveMode: 'global',
     audioTracksMode: 'all',
     audioTracks: [],
-    fontSizeBoost: 0,
+    enableCustomText: false,
+    fontSizeBoost: 4,
     bgImagePath: '',
     bgImagePreviewUrl: null,
     customBoostText: '',
+    customBoostTextLine2: '',
+    customBoostLine2Pos: 'below',
   }));
 
   slots[0] = {
@@ -107,10 +111,13 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     openAfterSaveMode: 'global',
     audioTracksMode: 'all',
     audioTracks: [],
-    fontSizeBoost: 0,
+    enableCustomText: false,
+    fontSizeBoost: 4,
     bgImagePath: '',
     bgImagePreviewUrl: null,
     customBoostText: '',
+    customBoostTextLine2: '',
+    customBoostLine2Pos: 'below',
   };
   slots[1] = {
     slotIndex: 1,
@@ -126,10 +133,13 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     openAfterSaveMode: 'open',
     audioTracksMode: 'all',
     audioTracks: [],
-    fontSizeBoost: 0,
+    enableCustomText: false,
+    fontSizeBoost: 4,
     bgImagePath: '',
     bgImagePreviewUrl: null,
     customBoostText: '',
+    customBoostTextLine2: '',
+    customBoostLine2Pos: 'below',
   };
   slots[2] = {
     slotIndex: 2,
@@ -145,10 +155,13 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     openAfterSaveMode: 'global',
     audioTracksMode: 'all',
     audioTracks: [],
-    fontSizeBoost: 8,
+    enableCustomText: false,
+    fontSizeBoost: 4,
     bgImagePath: '',
     bgImagePreviewUrl: null,
     customBoostText: '',
+    customBoostTextLine2: '',
+    customBoostLine2Pos: 'below',
   };
   slots[3] = {
     slotIndex: 3,
@@ -164,10 +177,13 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     openAfterSaveMode: 'global',
     audioTracksMode: 'all',
     audioTracks: [],
-    fontSizeBoost: 12,
+    enableCustomText: false,
+    fontSizeBoost: 4,
     bgImagePath: '',
     bgImagePreviewUrl: null,
     customBoostText: '',
+    customBoostTextLine2: '',
+    customBoostLine2Pos: 'below',
   };
   slots[4] = {
     slotIndex: 4,
@@ -183,10 +199,13 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     openAfterSaveMode: 'global',
     audioTracksMode: 'all',
     audioTracks: [],
-    fontSizeBoost: 12,
+    enableCustomText: false,
+    fontSizeBoost: 4,
     bgImagePath: '',
     bgImagePreviewUrl: null,
     customBoostText: '',
+    customBoostTextLine2: '',
+    customBoostLine2Pos: 'below',
   };
   slots[5] = {
     slotIndex: 5,
@@ -202,10 +221,13 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     openAfterSaveMode: 'global',
     audioTracksMode: 'all',
     audioTracks: [],
-    fontSizeBoost: 0,
+    enableCustomText: false,
+    fontSizeBoost: 4,
     bgImagePath: '',
     bgImagePreviewUrl: null,
     customBoostText: '',
+    customBoostTextLine2: '',
+    customBoostLine2Pos: 'below',
   };
   slots[6] = {
     slotIndex: 6,
@@ -221,10 +243,13 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     openAfterSaveMode: 'global',
     audioTracksMode: 'all',
     audioTracks: [],
-    fontSizeBoost: 0,
+    enableCustomText: false,
+    fontSizeBoost: 4,
     bgImagePath: '',
     bgImagePreviewUrl: null,
     customBoostText: '',
+    customBoostTextLine2: '',
+    customBoostLine2Pos: 'below',
   };
   slots[7] = {
     slotIndex: 7,
@@ -240,10 +265,13 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     openAfterSaveMode: 'global',
     audioTracksMode: 'all',
     audioTracks: [],
-    fontSizeBoost: 0,
+    enableCustomText: false,
+    fontSizeBoost: 4,
     bgImagePath: '',
     bgImagePreviewUrl: null,
     customBoostText: '',
+    customBoostTextLine2: '',
+    customBoostLine2Pos: 'below',
   };
 
   return slots;
@@ -634,7 +662,17 @@ export function StreamDeckEmulator({
 
   const assignActionToSelectedSlot = (actionType: StreamDeckActionType | null) => {
     if (!actionType) {
-      updateSelectedSlot({ actionType: null, userTitle: '', fontSizeBoost: 0, audioTracksMode: 'all', audioTracks: [] });
+      updateSelectedSlot({
+        actionType: null,
+        userTitle: '',
+        enableCustomText: false,
+        fontSizeBoost: 4,
+        customBoostText: '',
+        customBoostTextLine2: '',
+        customBoostLine2Pos: 'below',
+        audioTracksMode: 'all',
+        audioTracks: [],
+      });
       return;
     }
     const meta = ACTION_CATALOG.find((a) => a.type === actionType);
@@ -646,7 +684,11 @@ export function StreamDeckEmulator({
       actionType,
       userTitle: isAutoLabel ? '' : meta?.defaultTitle ?? '',
       titleFontSize: isAutoLabel ? 16 : 13,
-      fontSizeBoost: 0,
+      enableCustomText: false,
+      fontSizeBoost: 4,
+      customBoostText: '',
+      customBoostTextLine2: '',
+      customBoostLine2Pos: 'below',
       audioTracksMode: 'all',
       audioTracks: [],
     });
@@ -798,30 +840,58 @@ export function StreamDeckEmulator({
                     const feedback = slotBadgeFeedback[slot.slotIndex];
 
                     const isDynamic = slot.actionType === StreamDeckActionType.DYNAMIC_LENGTH;
-                    const boost = Math.max(0, Math.min(56, slot.fontSizeBoost || 0));
+                    const customActive = Boolean(slot.enableCustomText);
+                    const boost = customActive
+                      ? Math.max(0, Math.min(56, Number.isFinite(slot.fontSizeBoost) ? slot.fontSizeBoost : 4))
+                      : 0;
                     const effectiveFontSize = Math.min(64, slot.titleFontSize + boost);
 
                     let displayTitle = slot.userTitle;
-                    if (boost > 0 && slot.customBoostText.trim()) {
-                      displayTitle = slot.customBoostText.replace(/\\n/g, '\n');
+                    if (customActive) {
+                      let primaryLine = '';
+                      if (slot.customBoostText.trim().length > 0) {
+                        // Line 1 always overwrites the timer / default symbol
+                        primaryLine = slot.customBoostText.trim();
+                      } else if (isDynamic) {
+                        primaryLine = formatDynamicButtonTitle(dynamicSeconds);
+                      } else if (slot.userTitle.trim().length > 0) {
+                        primaryLine = slot.userTitle.trim();
+                      } else if (slot.actionType === StreamDeckActionType.DYNAMIC_INCREASE) {
+                        primaryLine = '+';
+                      } else if (slot.actionType === StreamDeckActionType.DYNAMIC_DECREASE) {
+                        primaryLine = '-';
+                      } else if (slot.actionType === StreamDeckActionType.FIXED_LENGTH) {
+                        primaryLine = formatDynamicButtonTitle(
+                          Math.max(1, parseTimecodeToSeconds(slot.fixedDurationInput, 30))
+                        );
+                      } else if (slot.actionType === StreamDeckActionType.RESET_DYNAMIC_LENGTH) {
+                        primaryLine = formatDynamicButtonTitle(
+                          Math.max(1, parseTimecodeToSeconds(slot.resetDurationInput, 30))
+                        );
+                      }
+
+                      const secondLine = slot.customBoostTextLine2.trim();
+                      if (secondLine.length > 0) {
+                        if (primaryLine.length > 0) {
+                          displayTitle =
+                            slot.customBoostLine2Pos === 'above'
+                              ? `${secondLine}\n${primaryLine}`
+                              : `${primaryLine}\n${secondLine}`;
+                        } else {
+                          displayTitle = secondLine;
+                        }
+                      } else {
+                        displayTitle = primaryLine;
+                      }
                     } else if (isDynamic) {
                       displayTitle = slot.userTitle.trim() || formatDynamicButtonTitle(dynamicSeconds);
                     } else if (slot.actionType === StreamDeckActionType.DYNAMIC_INCREASE) {
                       displayTitle = slot.userTitle.trim() || '+';
                     } else if (slot.actionType === StreamDeckActionType.DYNAMIC_DECREASE) {
                       displayTitle = slot.userTitle.trim() || '-';
-                    } else if (boost > 0 && !slot.userTitle.trim()) {
-                      if (slot.actionType === StreamDeckActionType.FIXED_LENGTH) {
-                        displayTitle = formatDynamicButtonTitle(
-                          Math.max(1, parseTimecodeToSeconds(slot.fixedDurationInput, 30))
-                        );
-                      } else if (slot.actionType === StreamDeckActionType.RESET_DYNAMIC_LENGTH) {
-                        displayTitle = formatDynamicButtonTitle(
-                          Math.max(1, parseTimecodeToSeconds(slot.resetDurationInput, 30))
-                        );
-                      }
                     }
 
+                    const isTwoLine = displayTitle.includes('\n');
                     const alignClass =
                       slot.titleAlignment === 'top'
                         ? 'items-start pt-2'
@@ -860,8 +930,10 @@ export function StreamDeckEmulator({
                             fontSize: `${effectiveFontSize}px`,
                             color: slot.titleColor,
                           }}
-                          className={`font-semibold leading-none text-center whitespace-pre-line break-words max-w-full drop-shadow-sm ${
-                            isDynamic || boost > 0 ? 'font-mono tabular-nums tracking-tight' : ''
+                          className={`font-semibold ${
+                            isTwoLine ? 'leading-[1.12]' : 'leading-none'
+                          } text-center whitespace-pre-line break-words max-w-full drop-shadow-sm ${
+                            isDynamic || customActive ? 'font-mono tabular-nums tracking-tight' : ''
                           }`}
                         >
                           {displayTitle}
@@ -1219,7 +1291,7 @@ export function StreamDeckEmulator({
                           <span className="text-xs font-semibold text-slate-200">
                             Custom Text Size &amp; Key Background
                           </span>
-                          {selectedSlot.fontSizeBoost > 0 && (
+                          {selectedSlot.enableCustomText && (
                             <span className="text-xs font-mono tabular-nums text-blue-400">
                               +{selectedSlot.fontSizeBoost}pt ({selectedSlot.titleFontSize + selectedSlot.fontSizeBoost}pt)
                             </span>
@@ -1234,63 +1306,139 @@ export function StreamDeckEmulator({
 
                       {appearanceMenuOpen && (
                         <div className="p-3.5 border-t border-slate-800 space-y-3.5">
-                          <div className="space-y-1.5">
-                            <label htmlFor="slot-font-boost" className="text-xs font-medium text-slate-300">
-                              Font Size Boost (+pt above Stream Deck size)
-                            </label>
-                            <div className="flex items-center gap-1.5">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  updateSelectedSlot({
-                                    fontSizeBoost: Math.max(0, (selectedSlot.fontSizeBoost || 0) - 1),
-                                  })
-                                }
-                                className="px-2.5 py-1.5 text-xs font-mono font-medium text-slate-200 bg-[#131924] hover:bg-slate-800 border border-slate-700 rounded-md cursor-pointer"
-                              >
-                                -1
-                              </button>
-                              <input
-                                id="slot-font-boost"
-                                type="number"
-                                min={0}
-                                max={56}
-                                step={1}
-                                value={selectedSlot.fontSizeBoost}
-                                onChange={(e) =>
-                                  updateSelectedSlot({
-                                    fontSizeBoost: Math.min(56, Math.max(0, Math.round(Number(e.target.value) || 0))),
-                                  })
-                                }
-                                className="flex-1 min-w-0 bg-[#131924] border border-slate-700 focus:border-blue-500 rounded-md px-2.5 py-1.5 text-xs font-mono tabular-nums text-slate-100 outline-none"
-                              />
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  updateSelectedSlot({
-                                    fontSizeBoost: Math.min(56, (selectedSlot.fontSizeBoost || 0) + 1),
-                                  })
-                                }
-                                className="px-2.5 py-1.5 text-xs font-mono font-medium text-slate-200 bg-[#131924] hover:bg-slate-800 border border-slate-700 rounded-md cursor-pointer"
-                              >
-                                +1
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => updateSelectedSlot({ fontSizeBoost: 0 })}
-                                className="px-2.5 py-1.5 text-xs font-medium text-slate-300 bg-[#131924] hover:bg-slate-800 border border-slate-700 rounded-md cursor-pointer whitespace-nowrap"
-                              >
-                                Reset (0)
-                              </button>
+                          <label className="inline-flex items-start gap-2.5 cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={selectedSlot.enableCustomText}
+                              onChange={(e) => updateSelectedSlot({ enableCustomText: e.target.checked })}
+                              className="mt-0.5 w-4 h-4 rounded border-slate-600 bg-[#0B0F17] text-blue-600"
+                            />
+                            <div>
+                              <span className="block text-xs font-medium text-slate-200">
+                                Enable Custom Text Size &amp; Text Override
+                              </span>
+                              <span className="block text-xs text-slate-500 mt-0.5">
+                                Off by default. Turning this on immediately boosts text by +{selectedSlot.fontSizeBoost}pt and unlocks 2-line text overrides.
+                              </span>
                             </div>
-                            <p className="text-xs text-slate-500 leading-relaxed">
-                              {selectedSlot.fontSizeBoost > 0
-                                ? `Boost +${selectedSlot.fontSizeBoost}pt (${selectedSlot.titleFontSize} → ${selectedSlot.titleFontSize + selectedSlot.fontSizeBoost}pt) using Stream Deck's selected Font & Color. Leave Title Text blank so text doesn't double up.`
-                                : '0 (Off) — Uses Stream Deck’s native text size & icon layer.'}
-                            </p>
+                          </label>
+
+                          <div
+                            className={`space-y-3 transition-opacity ${
+                              selectedSlot.enableCustomText ? 'opacity-100' : 'opacity-45 pointer-events-none select-none'
+                            }`}
+                          >
+                            <div className="space-y-1.5">
+                              <label htmlFor="slot-font-boost" className="text-xs font-medium text-slate-300">
+                                Font Size Boost (+pt above Stream Deck size)
+                              </label>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  disabled={!selectedSlot.enableCustomText}
+                                  onClick={() =>
+                                    updateSelectedSlot({
+                                      fontSizeBoost: Math.max(0, (selectedSlot.fontSizeBoost ?? 4) - 1),
+                                    })
+                                  }
+                                  className="px-2.5 py-1.5 text-xs font-mono font-medium text-slate-200 bg-[#131924] hover:bg-slate-800 border border-slate-700 rounded-md cursor-pointer"
+                                >
+                                  -1
+                                </button>
+                                <input
+                                  id="slot-font-boost"
+                                  type="number"
+                                  min={0}
+                                  max={56}
+                                  step={1}
+                                  disabled={!selectedSlot.enableCustomText}
+                                  value={selectedSlot.fontSizeBoost}
+                                  onChange={(e) =>
+                                    updateSelectedSlot({
+                                      fontSizeBoost: Math.min(56, Math.max(0, Math.round(Number(e.target.value) || 0))),
+                                    })
+                                  }
+                                  className="flex-1 min-w-0 bg-[#131924] border border-slate-700 focus:border-blue-500 rounded-md px-2.5 py-1.5 text-xs font-mono tabular-nums text-slate-100 outline-none"
+                                />
+                                <button
+                                  type="button"
+                                  disabled={!selectedSlot.enableCustomText}
+                                  onClick={() =>
+                                    updateSelectedSlot({
+                                      fontSizeBoost: Math.min(56, (selectedSlot.fontSizeBoost ?? 4) + 1),
+                                    })
+                                  }
+                                  className="px-2.5 py-1.5 text-xs font-mono font-medium text-slate-200 bg-[#131924] hover:bg-slate-800 border border-slate-700 rounded-md cursor-pointer"
+                                >
+                                  +1
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={!selectedSlot.enableCustomText}
+                                  onClick={() => updateSelectedSlot({ fontSizeBoost: 4 })}
+                                  className="px-2.5 py-1.5 text-xs font-medium text-slate-300 bg-[#131924] hover:bg-slate-800 border border-slate-700 rounded-md cursor-pointer whitespace-nowrap"
+                                >
+                                  Reset (4)
+                                </button>
+                              </div>
+                              <p className="text-xs text-slate-500 leading-relaxed">
+                                {selectedSlot.enableCustomText
+                                  ? `Boost +${selectedSlot.fontSizeBoost}pt (${selectedSlot.titleFontSize} → ${selectedSlot.titleFontSize + selectedSlot.fontSizeBoost}pt) using Stream Deck's selected Font & Color. Leave Stream Deck's Title box blank so text doesn't double up.`
+                                  : `Default boost is +4pt. Check the box above to activate.`}
+                              </p>
+                            </div>
+
+                            <div className="space-y-1">
+                              <label htmlFor="slot-boost-text" className="text-xs font-medium text-slate-300">
+                                Boosted Text Override — Line 1 (Optional)
+                              </label>
+                              <input
+                                id="slot-boost-text"
+                                type="text"
+                                disabled={!selectedSlot.enableCustomText}
+                                value={selectedSlot.customBoostText}
+                                onChange={(e) => updateSelectedSlot({ customBoostText: e.target.value })}
+                                placeholder="Overwrites timer / + / - (leave blank to keep timer)"
+                                className="w-full bg-[#131924] border border-slate-700 focus:border-blue-500 rounded-md px-2.5 py-1.5 text-xs text-slate-100 outline-none"
+                              />
+                            </div>
+
+                            <div className="space-y-1">
+                              <label htmlFor="slot-boost-text-line2" className="text-xs font-medium text-slate-300">
+                                Boosted Text — Line 2 (Optional)
+                              </label>
+                              <div className="flex items-center gap-1.5">
+                                <input
+                                  id="slot-boost-text-line2"
+                                  type="text"
+                                  disabled={!selectedSlot.enableCustomText}
+                                  value={selectedSlot.customBoostTextLine2}
+                                  onChange={(e) => updateSelectedSlot({ customBoostTextLine2: e.target.value })}
+                                  placeholder="2nd line text (e.g. MIC ON)"
+                                  className="flex-1 min-w-0 bg-[#131924] border border-slate-700 focus:border-blue-500 rounded-md px-2.5 py-1.5 text-xs text-slate-100 outline-none"
+                                />
+                                <select
+                                  aria-label="Line 2 position relative to timer or Line 1"
+                                  disabled={!selectedSlot.enableCustomText}
+                                  value={selectedSlot.customBoostLine2Pos}
+                                  onChange={(e) =>
+                                    updateSelectedSlot({
+                                      customBoostLine2Pos: e.target.value as BoostLine2Position,
+                                    })
+                                  }
+                                  className="w-24 shrink-0 bg-[#131924] border border-slate-700 focus:border-blue-500 rounded-md px-2 py-1.5 text-xs text-slate-100 outline-none"
+                                >
+                                  <option value="below">Below</option>
+                                  <option value="above">Above</option>
+                                </select>
+                              </div>
+                              <p className="text-xs text-slate-500">
+                                Places Line 2 above or below the timer (or Line 1) and centers both lines together.
+                              </p>
+                            </div>
                           </div>
 
-                          <div className="space-y-1.5">
+                          <div className="space-y-1.5 pt-3 border-t border-slate-800/80">
                             <label htmlFor="slot-bg-img" className="text-xs font-medium text-slate-300">
                               Key Background Image (Optional — .png / .jpg)
                             </label>
@@ -1330,20 +1478,6 @@ export function StreamDeckEmulator({
                             <p className="text-xs text-slate-500">
                               Composites your PNG/JPG directly behind giant boosted timers or symbols.
                             </p>
-                          </div>
-
-                          <div className="space-y-1">
-                            <label htmlFor="slot-boost-text" className="text-xs font-medium text-slate-300">
-                              Boosted Text Override (Optional)
-                            </label>
-                            <input
-                              id="slot-boost-text"
-                              type="text"
-                              value={selectedSlot.customBoostText}
-                              onChange={(e) => updateSelectedSlot({ customBoostText: e.target.value })}
-                              placeholder="Leave blank for automatic timer / + / -"
-                              className="w-full bg-[#131924] border border-slate-700 focus:border-blue-500 rounded-md px-2.5 py-1.5 text-xs text-slate-100 outline-none"
-                            />
                           </div>
                         </div>
                       )}

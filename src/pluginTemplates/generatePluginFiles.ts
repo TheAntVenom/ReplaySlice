@@ -1,7 +1,7 @@
 import { GeneratedPluginFile, GlobalPluginSettings } from '../types/plugin';
 
 export const PLUGIN_UUID = 'com.antvenom.replayslice';
-export const PLUGIN_VERSION = '1.0.4';
+export const PLUGIN_VERSION = '1.0.4.1';
 export const SD_PLUGIN_FOLDER = `${PLUGIN_UUID}.sdPlugin`;
 
 export function generateManifestJson(): string {
@@ -1026,29 +1026,48 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '  }',
     '}',
     '',
+    'function isCustomTextEnabled(btnSettings) {',
+    '  if (!btnSettings) return false;',
+    '  if (typeof btnSettings.enableCustomText === "boolean") {',
+    '    return btnSettings.enableCustomText;',
+    '  }',
+    '  return Number(btnSettings.fontSizeBoost) > 0;',
+    '}',
+    '',
     'function resolveBoostedDisplayText(action, meta, btnSettings) {',
-    '  const override = String(btnSettings.customBoostText || "");',
-    '  if (override.trim().length > 0) {',
-    '    return override.replace(/\\\\n/g, "\\n");',
+    '  let primaryLine = "";',
+    '  const line1Override = String(btnSettings.customBoostText || "").trim();',
+    '  if (line1Override.length > 0) {',
+    '    // Line 1 always overwrites the timer / default symbol',
+    '    primaryLine = line1Override;',
+    '  } else if (action === ACTION_DYNAMIC) {',
+    '    primaryLine = formatDynamicTitle(globalSettings.dynamicCurrentSeconds ?? 60);',
+    '  } else {',
+    '    const typedTitle = String(meta.userTitle || "").trim();',
+    '    if (typedTitle.length > 0) {',
+    '      primaryLine = typedTitle;',
+    '    } else if (action === ACTION_INCREASE) {',
+    '      primaryLine = "+";',
+    '    } else if (action === ACTION_DECREASE) {',
+    '      primaryLine = "-";',
+    '    } else if (action === ACTION_FIXED) {',
+    '      const sec = Math.max(1, parseTimecodeToSeconds(btnSettings.fixedDuration || "00:30", 30));',
+    '      primaryLine = formatDynamicTitle(sec);',
+    '    } else if (action === ACTION_RESET) {',
+    '      const sec = Math.max(1, parseTimecodeToSeconds(btnSettings.resetDuration || "00:30", 30));',
+    '      primaryLine = formatDynamicTitle(sec);',
+    '    }',
     '  }',
-    '  if (action === ACTION_DYNAMIC) {',
-    '    return formatDynamicTitle(globalSettings.dynamicCurrentSeconds ?? 60);',
+    '',
+    '  const secondLine = String(btnSettings.customBoostTextLine2 || "").trim();',
+    '  if (secondLine.length > 0) {',
+    '    const line2Pos = btnSettings.customBoostLine2Pos === "above" ? "above" : "below";',
+    '    if (primaryLine.length > 0) {',
+    '      return line2Pos === "above" ? `${secondLine}\\n${primaryLine}` : `${primaryLine}\\n${secondLine}`;',
+    '    }',
+    '    return secondLine;',
     '  }',
-    '  const typedTitle = String(meta.userTitle || "");',
-    '  if (typedTitle.trim().length > 0) {',
-    '    return typedTitle;',
-    '  }',
-    '  if (action === ACTION_INCREASE) return "+";',
-    '  if (action === ACTION_DECREASE) return "-";',
-    '  if (action === ACTION_FIXED) {',
-    '    const sec = Math.max(1, parseTimecodeToSeconds(btnSettings.fixedDuration || "00:30", 30));',
-    '    return formatDynamicTitle(sec);',
-    '  }',
-    '  if (action === ACTION_RESET) {',
-    '    const sec = Math.max(1, parseTimecodeToSeconds(btnSettings.resetDuration || "00:30", 30));',
-    '    return formatDynamicTitle(sec);',
-    '  }',
-    '  return "";',
+    '  return primaryLine;',
     '}',
     '',
     'function buildKeySvg({ bgDataUri, text, titleParams, effectiveSize }) {',
@@ -1100,11 +1119,14 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '  const btnSettings = meta.settings || {};',
     '  const titleParams = meta.titleParams || DEFAULT_TITLE_PARAMS;',
     '  const userTitle = String(meta.userTitle || "");',
+    '  const customTextActive = isCustomTextEnabled(btnSettings);',
     '  const rawBoost = Number(btnSettings.fontSizeBoost);',
-    '  const boost = Number.isFinite(rawBoost) && rawBoost > 0 ? Math.min(56, Math.round(rawBoost)) : 0;',
+    '  const boost = customTextActive',
+    '    ? (Number.isFinite(rawBoost) && rawBoost >= 0 ? Math.min(56, Math.round(rawBoost)) : 4)',
+    '    : 0;',
     '  const bgDataUri = btnSettings.bgImagePath ? loadBackgroundImageDataUri(btnSettings.bgImagePath) : "";',
     '',
-    '  if (boost <= 0 && !bgDataUri) {',
+    '  if (!customTextActive && !bgDataUri) {',
     '    if (meta.hasCustomImage) {',
     '      sd.sendJSON({ event: "setImage", context, payload: { target: 0 } });',
     '      meta.hasCustomImage = false;',
@@ -1130,7 +1152,7 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '    return;',
     '  }',
     '',
-    '  if (boost <= 0 && bgDataUri) {',
+    '  if (!customTextActive && bgDataUri) {',
     '    const svg = buildKeySvg({ bgDataUri, text: "", titleParams, effectiveSize: 16 });',
     '    const svgUri = "data:image/svg+xml;base64," + Buffer.from(svg, "utf8").toString("base64");',
     '    if (meta.lastSentImage !== svgUri) {',
@@ -1158,7 +1180,7 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '    return;',
     '  }',
     '',
-    '  // Boost > 0: clear plugin-driven native title so text never doubles up, then render boosted SVG text + optional PNG background',
+    '  // Custom Text Size / Override enabled: clear plugin-driven native title so text never doubles up, then render 1- or 2-line centered SVG text + optional PNG background',
     '  if (meta.lastSentTitle !== "") {',
     '    sd.sendJSON({ event: "setTitle", context, payload: { title: "", target: 0 } });',
     '    meta.lastSentTitle = "";',
@@ -1848,6 +1870,16 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
     .track-btn.active:hover {
       background: #1D4ED8;
     }
+    .controls-disabled {
+      opacity: 0.45;
+      pointer-events: none;
+      user-select: none;
+    }
+    .sub-divider {
+      border-top: 1px solid #3A3A3A;
+      margin-top: 10px;
+      padding-top: 10px;
+    }
   </style>
 </head>
 <body>
@@ -1915,31 +1947,50 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
     <details id="menu-appearance" class="menu-group">
       <summary>Custom Text Size &amp; Key Background</summary>
       <div class="menu-body">
-        <div class="row">
-          <label for="fontSizeBoost">Font Size Boost (+pt above Stream Deck size)</label>
-          <div class="inline-group">
-            <button id="boostMinusBtn" type="button" title="Decrease font boost">-1</button>
-            <input id="fontSizeBoost" type="number" step="1" min="0" max="56" placeholder="0" value="0" />
-            <button id="boostPlusBtn" type="button" title="Increase font boost">+1</button>
-            <button id="boostResetBtn" type="button">Reset (0)</button>
+        <label class="checkbox-row" style="margin: 0 0 8px;">
+          <input id="enableCustomText" type="checkbox" />
+          <span>Enable Custom Text Size &amp; Text Override</span>
+        </label>
+
+        <div id="customTextControlsWrap" class="controls-disabled">
+          <div class="row">
+            <label for="fontSizeBoost">Font Size Boost (+pt above Stream Deck size)</label>
+            <div class="inline-group">
+              <button id="boostMinusBtn" type="button" title="Decrease font boost">-1</button>
+              <input id="fontSizeBoost" type="number" step="1" min="0" max="56" placeholder="4" value="4" />
+              <button id="boostPlusBtn" type="button" title="Increase font boost">+1</button>
+              <button id="boostResetBtn" type="button">Reset (4)</button>
+            </div>
+            <div id="fontSizeBoostHint" class="hint">Default boost is +4pt. Check the box above to activate.</div>
           </div>
-          <div id="fontSizeBoostHint" class="hint">0 = Default Stream Deck text. Increase (+1, +2, …) to scale past 16/18pt using Stream Deck's selected font &amp; color.</div>
+
+          <div class="row">
+            <label for="customBoostText">Boosted Text Override — Line 1 (Optional)</label>
+            <input id="customBoostText" type="text" placeholder="Overwrites timer / + / - (leave blank to keep timer)" />
+            <div class="hint">Keep Stream Deck's main Title box blank so text doesn't double up.</div>
+          </div>
+
+          <div class="row">
+            <label for="customBoostTextLine2">Boosted Text — Line 2 (Optional)</label>
+            <div class="inline-group">
+              <input id="customBoostTextLine2" type="text" placeholder="2nd line text" />
+              <select id="customBoostLine2Pos" style="width: auto; flex: 0 0 88px;" title="Place Line 2 above or below timer / Line 1">
+                <option value="below">Below</option>
+                <option value="above">Above</option>
+              </select>
+            </div>
+            <div class="hint">Places Line 2 above or below the timer (or Line 1) and centers both lines together.</div>
+          </div>
         </div>
 
-        <div class="row">
+        <div class="row sub-divider">
           <label for="bgImagePath">Key Background Image (Optional — .png / .jpg)</label>
           <div class="inline-group">
             <input id="bgImagePath" type="text" placeholder="Optional PNG/JPG behind boosted text" />
             <button type="button" data-browse-file="bgImagePath" data-kind="image" data-title="Select Key Background Image">Browse</button>
             <button id="clearBgImageBtn" type="button">Clear</button>
           </div>
-          <div class="hint">Renders your PNG/JPG right behind boosted dynamic text (use this instead of Stream Deck's top-left icon box when Boost &gt; 0).</div>
-        </div>
-
-        <div class="row">
-          <label for="customBoostText">Boosted Text Override (Optional)</label>
-          <input id="customBoostText" type="text" placeholder="Leave blank for automatic timer / + / -" />
-          <div class="hint">Keep Stream Deck's main Title box blank so text doesn't double up.</div>
+          <div class="hint">Renders your PNG/JPG right behind boosted dynamic text (use this instead of Stream Deck's top-left icon box when custom text is enabled).</div>
         </div>
       </div>
     </details>
@@ -2084,12 +2135,63 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       openAfterSaveMode: "global",
       audioTracksMode: "all",
       audioTracks: [],
-      fontSizeBoost: 0,
+      enableCustomText: false,
+      fontSizeBoost: 4,
       bgImagePath: "",
-      customBoostText: ""
+      customBoostText: "",
+      customBoostTextLine2: "",
+      customBoostLine2Pos: "below"
     };
     let recordingHotkey = false;
     let isApplyingMenuState = false;
+
+    function normalizeCustomTextState(saved, fallbackState) {
+      const src = saved || {};
+      const fb = fallbackState || {};
+      let enabled;
+      let boost;
+      if (typeof src.enableCustomText === "boolean") {
+        enabled = src.enableCustomText;
+        const rawB = Number(src.fontSizeBoost !== undefined ? src.fontSizeBoost : (fb.fontSizeBoost !== undefined ? fb.fontSizeBoost : 4));
+        boost = Number.isFinite(rawB) && rawB >= 0 ? Math.min(56, Math.round(rawB)) : 4;
+      } else if (typeof fb.enableCustomText === "boolean" && src.fontSizeBoost === undefined) {
+        enabled = fb.enableCustomText;
+        const rawB = Number(fb.fontSizeBoost !== undefined ? fb.fontSizeBoost : 4);
+        boost = Number.isFinite(rawB) && rawB >= 0 ? Math.min(56, Math.round(rawB)) : 4;
+      } else {
+        const legacyBoost = Number(src.fontSizeBoost);
+        if (Number.isFinite(legacyBoost) && legacyBoost > 0) {
+          enabled = true;
+          boost = Math.min(56, Math.round(legacyBoost));
+        } else {
+          enabled = false;
+          boost = 4;
+        }
+      }
+      const line1 = src.customBoostText !== undefined ? String(src.customBoostText) : String(fb.customBoostText || "");
+      const line2 = src.customBoostTextLine2 !== undefined ? String(src.customBoostTextLine2) : String(fb.customBoostTextLine2 || "");
+      const rawPos = src.customBoostLine2Pos !== undefined ? src.customBoostLine2Pos : fb.customBoostLine2Pos;
+      const line2Pos = rawPos === "above" ? "above" : "below";
+      return {
+        enableCustomText: enabled,
+        fontSizeBoost: boost,
+        customBoostText: line1,
+        customBoostTextLine2: line2,
+        customBoostLine2Pos: line2Pos
+      };
+    }
+
+    function syncCustomTextControlsState() {
+      const isEnabled = Boolean(document.getElementById("enableCustomText").checked);
+      const wrap = document.getElementById("customTextControlsWrap");
+      if (wrap) {
+        wrap.classList.toggle("controls-disabled", !isEnabled);
+      }
+      ["fontSizeBoost", "boostMinusBtn", "boostPlusBtn", "boostResetBtn", "customBoostText", "customBoostTextLine2", "customBoostLine2Pos"].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = !isEnabled;
+      });
+    }
 
     function normalizeAudioTracks(rawTracks) {
       if (!Array.isArray(rawTracks)) return [];
@@ -2239,12 +2341,13 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
           "Sets Dynamic Length to " + resetSec + "s (" + formatDisplayDuration(resetSec) + ") when pressed · Independent to this button";
       }
 
+      const customEnabled = Boolean(document.getElementById("enableCustomText").checked);
       const rawBoost = Number(document.getElementById("fontSizeBoost").value);
-      const boostVal = Number.isFinite(rawBoost) && rawBoost > 0 ? Math.min(56, Math.round(rawBoost)) : 0;
+      const boostVal = Number.isFinite(rawBoost) && rawBoost >= 0 ? Math.min(56, Math.round(rawBoost)) : 4;
       const boostHint = document.getElementById("fontSizeBoostHint");
       if (boostHint) {
-        if (boostVal <= 0) {
-          boostHint.textContent = "0 (Off) — Uses Stream Deck's native text size & icon layer.";
+        if (!customEnabled) {
+          boostHint.textContent = "Off by default — Check the box above to immediately boost text by +" + boostVal + "pt (or use 2-line overrides).";
         } else {
           boostHint.textContent =
             "Boost +" + boostVal + "pt (e.g. 16 → " + (16 + boostVal) + "pt) using Stream Deck's selected Font, Style & Color. Leave Stream Deck's Title box blank so text doesn't double up.";
@@ -2342,10 +2445,12 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
 
     function persistAction() {
       const modeVal = document.getElementById("openAfterSaveMode").value || "global";
+      const customEnabled = Boolean(document.getElementById("enableCustomText").checked);
       const rawBoost = Number(document.getElementById("fontSizeBoost").value);
-      const safeBoost = Number.isFinite(rawBoost) && rawBoost > 0 ? Math.min(56, Math.round(rawBoost)) : 0;
+      const safeBoost = Number.isFinite(rawBoost) && rawBoost >= 0 ? Math.min(56, Math.round(rawBoost)) : 4;
       const safeAudioMode = actionState.audioTracksMode === "custom" ? "custom" : "all";
       const safeAudioTracks = safeAudioMode === "custom" ? normalizeAudioTracks(actionState.audioTracks) : [];
+      const line2PosVal = document.getElementById("customBoostLine2Pos").value === "above" ? "above" : "below";
 
       actionState = Object.assign({}, actionState, {
         fixedDuration: document.getElementById("fixedDuration").value.trim() || "00:30",
@@ -2356,10 +2461,14 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
         openAfterSave: modeVal === "open",
         audioTracksMode: safeAudioMode,
         audioTracks: safeAudioTracks,
+        enableCustomText: customEnabled,
         fontSizeBoost: safeBoost,
         bgImagePath: document.getElementById("bgImagePath").value.trim(),
-        customBoostText: document.getElementById("customBoostText").value
+        customBoostText: document.getElementById("customBoostText").value,
+        customBoostTextLine2: document.getElementById("customBoostTextLine2").value,
+        customBoostLine2Pos: line2PosVal
       });
+      syncCustomTextControlsState();
       renderAudioTrackButtons();
       updateHints();
       if (websocket && websocket.readyState === 1) {
@@ -2401,7 +2510,7 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       // Show Button Action Settings on all ReplaySlice buttons (every button supports Custom Text Size & Key Background)
       document.getElementById("actionSettingsSection").classList.remove("hidden");
       const saved = (actionInfo.payload && actionInfo.payload.settings) || {};
-      const initBoost = Number(saved.fontSizeBoost);
+      const customTextInit = normalizeCustomTextState(saved, null);
       const initAudioMode = saved.audioTracksMode === "custom" ? "custom" : "all";
       const initAudioTracks = initAudioMode === "custom"
         ? normalizeAudioTracks(Array.isArray(saved.audioTracks) ? saved.audioTracks : [1])
@@ -2414,14 +2523,21 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
         openAfterSaveMode: normalizeOpenMode(saved),
         audioTracksMode: initAudioMode,
         audioTracks: initAudioTracks,
-        fontSizeBoost: Number.isFinite(initBoost) && initBoost > 0 ? Math.min(56, Math.round(initBoost)) : 0,
+        enableCustomText: customTextInit.enableCustomText,
+        fontSizeBoost: customTextInit.fontSizeBoost,
         bgImagePath: saved.bgImagePath || "",
-        customBoostText: saved.customBoostText || ""
+        customBoostText: customTextInit.customBoostText,
+        customBoostTextLine2: customTextInit.customBoostTextLine2,
+        customBoostLine2Pos: customTextInit.customBoostLine2Pos
       });
 
+      document.getElementById("enableCustomText").checked = actionState.enableCustomText;
       document.getElementById("fontSizeBoost").value = actionState.fontSizeBoost;
       document.getElementById("bgImagePath").value = actionState.bgImagePath;
       document.getElementById("customBoostText").value = actionState.customBoostText;
+      document.getElementById("customBoostTextLine2").value = actionState.customBoostTextLine2;
+      document.getElementById("customBoostLine2Pos").value = actionState.customBoostLine2Pos;
+      syncCustomTextControlsState();
 
       if (isFixed || isDynamic) {
         document.getElementById("openAfterSaveWrap").classList.remove("hidden");
@@ -2468,7 +2584,7 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
           renderGlobalFields();
         } else if (msg.event === "didReceiveSettings") {
           const incoming = (msg.payload && msg.payload.settings) || {};
-          const incBoost = Number(incoming.fontSizeBoost !== undefined ? incoming.fontSizeBoost : actionState.fontSizeBoost);
+          const customTextSync = normalizeCustomTextState(incoming, actionState);
           const incAudioMode = incoming.audioTracksMode !== undefined
             ? (incoming.audioTracksMode === "custom" ? "custom" : "all")
             : actionState.audioTracksMode;
@@ -2483,14 +2599,21 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
             openAfterSaveMode: normalizeOpenMode(incoming),
             audioTracksMode: incAudioMode,
             audioTracks: incAudioTracks,
-            fontSizeBoost: Number.isFinite(incBoost) && incBoost > 0 ? Math.min(56, Math.round(incBoost)) : 0,
+            enableCustomText: customTextSync.enableCustomText,
+            fontSizeBoost: customTextSync.fontSizeBoost,
             bgImagePath: incoming.bgImagePath !== undefined ? incoming.bgImagePath : (actionState.bgImagePath || ""),
-            customBoostText: incoming.customBoostText !== undefined ? incoming.customBoostText : (actionState.customBoostText || "")
+            customBoostText: customTextSync.customBoostText,
+            customBoostTextLine2: customTextSync.customBoostTextLine2,
+            customBoostLine2Pos: customTextSync.customBoostLine2Pos
           });
           document.getElementById("openAfterSaveMode").value = actionState.openAfterSaveMode;
+          document.getElementById("enableCustomText").checked = actionState.enableCustomText;
           document.getElementById("fontSizeBoost").value = actionState.fontSizeBoost;
           document.getElementById("bgImagePath").value = actionState.bgImagePath;
           document.getElementById("customBoostText").value = actionState.customBoostText;
+          document.getElementById("customBoostTextLine2").value = actionState.customBoostTextLine2;
+          document.getElementById("customBoostLine2Pos").value = actionState.customBoostLine2Pos;
+          syncCustomTextControlsState();
           renderAudioTrackButtons();
           if (isFixed) document.getElementById("fixedDuration").value = actionState.fixedDuration;
           if (isIncrease || isDecrease) document.getElementById("stepDuration").value = actionState.stepDuration;
@@ -2530,9 +2653,11 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       });
     });
 
-    document.querySelectorAll("#fixedDuration, #stepDuration, #minFloor, #resetDuration, #fontSizeBoost, #bgImagePath, #customBoostText")
+    document.querySelectorAll("#fixedDuration, #stepDuration, #minFloor, #resetDuration, #fontSizeBoost, #bgImagePath, #customBoostText, #customBoostTextLine2")
       .forEach((el) => el.addEventListener("input", persistAction));
     document.getElementById("openAfterSaveMode").addEventListener("change", persistAction);
+    document.getElementById("enableCustomText").addEventListener("change", persistAction);
+    document.getElementById("customBoostLine2Pos").addEventListener("change", persistAction);
 
     document.getElementById("audioTrackAllBtn").addEventListener("click", () => {
       actionState.audioTracksMode = "all";
@@ -2561,18 +2686,20 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
 
     document.getElementById("boostMinusBtn").addEventListener("click", () => {
       const el = document.getElementById("fontSizeBoost");
-      const cur = Math.max(0, Number(el.value) || 0);
+      const raw = Number(el.value);
+      const cur = Number.isFinite(raw) ? Math.max(0, raw) : 4;
       el.value = Math.max(0, cur - 1);
       persistAction();
     });
     document.getElementById("boostPlusBtn").addEventListener("click", () => {
       const el = document.getElementById("fontSizeBoost");
-      const cur = Math.max(0, Number(el.value) || 0);
+      const raw = Number(el.value);
+      const cur = Number.isFinite(raw) ? Math.max(0, raw) : 4;
       el.value = Math.min(56, cur + 1);
       persistAction();
     });
     document.getElementById("boostResetBtn").addEventListener("click", () => {
-      document.getElementById("fontSizeBoost").value = 0;
+      document.getElementById("fontSizeBoost").value = 4;
       persistAction();
     });
     document.getElementById("clearBgImageBtn").addEventListener("click", () => {
@@ -2757,7 +2884,7 @@ Look under **ReplaySlice** in the right-hand Actions list of your Stream Deck so
 ## Key Behaviors
 - **Per-Button Audio Track Selection (Tracks 1–6 or All)**: Both *Fixed Length* and *Dynamic Length* buttons default to **All** audio tracks (\`-map 0:a?\`), or let you toggle any custom combination of **Audio Tracks 1–6** (\`-map 0:a:0? ... -map 0:a:5?\`) via 100% pure FFmpeg stream copy (\`-c copy\`, zero re-encoding). Missing tracks are safely skipped without crashing.
 - **Optional Recursive Capture Folder Search**: Inside **Directories & FFmpeg Path**, **Recursively Search Capture Folder?** is **off by default** so pointing at a main or root folder only checks top-level files without crawling massive subfolder trees. Turn it on when using **NVIDIA Replay** (*Essential for NVIDIA Replay*, since NVIDIA saves clips into game-specific subfolders).
-- **Custom Text Size Boost & Key Background**: Every ReplaySlice button includes a collapsible **Custom Text Size & Key Background** menu in *Button Action Settings*. Leave **Font Size Boost** at \`0\` for native Stream Deck text, or dial \`+1\`, \`+2\`, … up to \`36pt+\` using the exact font, style, color, and alignment selected in Stream Deck's main UI — with an optional **Key Background Image (\`.png\` / \`.jpg\`)** picker right inside the same menu so custom PNG backgrounds work behind giant dynamic timers.
+- **Custom Text Size Boost & Key Background**: Every ReplaySlice button includes a collapsible **Custom Text Size & Key Background** menu in *Button Action Settings* with an **Enable Custom Text Size & Text Override** checkbox (off by default, pre-set to \`+4pt\` so turning it on immediately boosts your text). Supports **Line 1** (overwrites the timer / symbol when filled) and **Line 2** (placed **Above** or **Below** the timer / Line 1 and centered together), plus an optional **Key Background Image (\`.png\` / \`.jpg\`)** picker right inside the same menu.
 - **Hold-to-Repeat on \`+\` / \`-\`**: Holding *Dynamic Increase* or *Dynamic Decrease* waits \`0.5s\` by default and then repeats \`5\` times per second. Both values can be customized in Global Plugin Settings under **Key Delay / Repeat**.
 - **2-Second Capture Debounce**: Rapidly pressing *Fixed Length* or *Dynamic Length* within 2 seconds ignores extra presses. *Dynamic Increase*, *Dynamic Decrease*, and *Reset Dynamic Length* are never debounced.
 - **Zero Re-Encoding & Aligned Audio/Video**: Waits for OBS / ShadowPlay to close its write lock so the file is 100% flushed, inspects audio & video durations via \`ffprobe\`, snaps to the nearest keyframe, and runs \`ffmpeg -c copy -avoid_negative_ts make_zero -shortest\` so audio and video lengths match without cutting off a 1.5s tail.

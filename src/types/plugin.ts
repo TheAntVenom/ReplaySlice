@@ -10,6 +10,7 @@ export enum StreamDeckActionType {
 
 export type OpenAfterSaveMode = 'global' | 'open' | 'never';
 export type AudioTracksMode = 'all' | 'custom';
+export type BoostLine2Position = 'above' | 'below';
 
 export interface GlobalPluginSettings {
   openAfterSave: boolean;
@@ -39,10 +40,13 @@ export interface DeckKeySlot {
   openAfterSaveMode: OpenAfterSaveMode; // Per-button override on Fixed & Dynamic Length ('global' | 'open' | 'never')
   audioTracksMode: AudioTracksMode; // Per-button audio track filter ('all' default | 'custom' tracks 1-6)
   audioTracks: number[]; // Selected 1-based audio tracks (1..6) when audioTracksMode === 'custom'
-  fontSizeBoost: number; // 0 = native Stream Deck text; +1..+56 = boosted SVG text using Stream Deck's font
+  enableCustomText: boolean; // Off by default; activates fontSizeBoost (default +4) & Line 1 / Line 2 overrides
+  fontSizeBoost: number; // Default 4 (+pt added to Stream Deck's font size when enableCustomText is on)
   bgImagePath: string; // Optional PNG/JPG file path composited behind boosted text
   bgImagePreviewUrl: string | null; // Optional local object URL for previewing PNG background in web emulator
-  customBoostText: string; // Optional custom text override when fontSizeBoost > 0
+  customBoostText: string; // Line 1 override: always overwrites timer / + / - when non-empty
+  customBoostTextLine2: string; // Line 2 text: placed above or below Line 1 / timer and centered together
+  customBoostLine2Pos: BoostLine2Position; // 'below' (default) | 'above'
 }
 
 export interface CaptureLogEntry {
