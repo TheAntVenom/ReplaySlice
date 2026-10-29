@@ -42,6 +42,10 @@ export interface DeckKeySlot {
   audioTracks: number[]; // Selected 1-based audio tracks (1..6) when audioTracksMode === 'custom'
   enableCustomText: boolean; // Off by default; activates fontSizeBoost (default +4) & Line 1 / Line 2 overrides
   fontSizeBoost: number; // Default 4 (+pt added to Stream Deck's font size when enableCustomText is on)
+  enableTextShadow: boolean; // Off by default; sits right below Enable Custom Text Size & Text Override
+  textShadowColor: string; // 6-character hex RGB value without '#' (default '000000')
+  textShadowSize: number; // Drop shadow size / spread & offset (default 3)
+  textShadowBlend: number; // Drop shadow feather / blend softness (default 4; 0 = sharp)
   bgImagePath: string; // Optional PNG/JPG file path composited behind boosted text
   bgImagePreviewUrl: string | null; // Optional local object URL for previewing PNG background in web emulator
   customBoostText: string; // Line 1 override: always overwrites timer / + / - when non-empty

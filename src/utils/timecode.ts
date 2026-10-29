@@ -162,15 +162,17 @@ export function computeReplayTrimPlan(params: {
 
   const outputDurationSeconds = Math.max(0.1, Number((alignedEndSeconds - keyframeStartSeconds).toFixed(2)));
   const tag = formatFilenameDurationTag(req);
-  const outputFileName = `${masterFileBaseName}_${tag}.mp4`;
+  const flatMasterBase = masterFileBaseName.split(/[\\/]/).pop() || 'Replay_Clip';
+  const outputFileName = `${flatMasterBase}_${tag}.mp4`;
 
-  const resolvedFfmpeg = ffmpegPath.trim() ? `"${ffmpegPath.trim()}"` : 'ffmpeg';
-  const cleanSourceDir = (mainCapturesDir.trim() || 'C:\\Videos\\Captures').replace(/[\\/]+$/, '');
-  const cleanOutDir = (outputDir.trim() || cleanSourceDir).replace(/[\\/]+$/, '');
-  const sep = cleanSourceDir.includes('/') ? '/' : '\\';
+  const resolvedFfmpeg = ffmpegPath.trim() ? `"${ffmpegPath.trim().replace(/^"+|"+$/g, '')}"` : 'ffmpeg';
+  const cleanSourceDir = (mainCapturesDir.trim().replace(/^"+|"+$/g, '') || 'C:\\Videos\\Captures').replace(/[\\/]+$/, '');
+  const cleanOutDir = (outputDir.trim().replace(/^"+|"+$/g, '') || cleanSourceDir).replace(/[\\/]+$/, '');
+  const inSep = cleanSourceDir.includes('/') ? '/' : '\\';
+  const outSep = cleanOutDir.includes('/') ? '/' : '\\';
 
-  const masterFullPath = `${cleanSourceDir}${sep}${masterFileBaseName}.mp4`;
-  const outputFullPath = `${cleanOutDir}${sep}${outputFileName}`;
+  const masterFullPath = `${cleanSourceDir}${inSep}${flatMasterBase}.mp4`;
+  const outputFullPath = `${cleanOutDir}${outSep}${outputFileName}`;
 
   const validCustomTracks = Array.from(
     new Set(audioTracks.filter((n) => Number.isInteger(n) && n >= 1 && n <= 6))

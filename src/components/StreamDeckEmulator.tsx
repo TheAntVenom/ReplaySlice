@@ -73,7 +73,86 @@ const ACTION_CATALOG: Array<{
   },
 ];
 
+function sanitizeShadowHex6(raw: string, fallback = '000000'): string {
+  const cleaned = String(raw || '').trim().replace(/^#+/, '');
+  return /^[0-9a-fA-F]{6}$/.test(cleaned) ? cleaned.toUpperCase() : fallback;
+}
+
+function hex6ToRgb(hex6: string): { r: number; g: number; b: number } {
+  const safe = sanitizeShadowHex6(hex6, '000000');
+  return {
+    r: parseInt(safe.slice(0, 2), 16),
+    g: parseInt(safe.slice(2, 4), 16),
+    b: parseInt(safe.slice(4, 6), 16),
+  };
+}
+
+function buildKeyTextShadowCss(slot: DeckKeySlot): string | undefined {
+  if (!slot.enableTextShadow) return undefined;
+  const { r, g, b } = hex6ToRgb(slot.textShadowColor);
+  const shSize =
+    Number.isFinite(slot.textShadowSize) && slot.textShadowSize >= 0
+      ? Math.min(32, slot.textShadowSize)
+      : 3;
+  const shBlend =
+    Number.isFinite(slot.textShadowBlend) && slot.textShadowBlend >= 0
+      ? Math.min(32, slot.textShadowBlend)
+      : 4;
+  if (shSize <= 0 && shBlend <= 0) return 'none';
+
+  const dx = shSize > 0 ? shSize * 0.28 : 0;
+  const dy = shSize > 0 ? shSize * 0.38 : 0;
+  const spreadRadius = shSize * 0.425;
+  const blurPx = shBlend <= 0.05 ? 0 : shBlend * 1.35;
+  const alpha = shBlend <= 0.05 ? 0.92 : Math.max(0.55, Math.min(0.9, 0.9 - shBlend * 0.012));
+
+  const shadows: string[] = [];
+  if (spreadRadius <= 0.15) {
+    shadows.push(`${dx.toFixed(2)}px ${dy.toFixed(2)}px ${blurPx.toFixed(2)}px rgba(${r}, ${g}, ${b}, ${alpha.toFixed(2)})`);
+    if (blurPx > 0) {
+      shadows.push(
+        `${dx.toFixed(2)}px ${dy.toFixed(2)}px ${(blurPx * 0.55).toFixed(2)}px rgba(${r}, ${g}, ${b}, ${(alpha * 0.75).toFixed(2)})`
+      );
+    }
+    return shadows.join(', ');
+  }
+
+  const angles = 8;
+  const ringAlpha = blurPx > 0 ? Math.min(0.85, alpha * 0.55) : alpha;
+  for (let i = 0; i < angles; i++) {
+    const theta = (i * Math.PI * 2) / angles;
+    const ox = dx + Math.cos(theta) * spreadRadius;
+    const oy = dy + Math.sin(theta) * spreadRadius;
+    shadows.push(`${ox.toFixed(2)}px ${oy.toFixed(2)}px ${blurPx.toFixed(2)}px rgba(${r}, ${g}, ${b}, ${ringAlpha.toFixed(2)})`);
+  }
+  if (spreadRadius > 2.2) {
+    const innerR = spreadRadius * 0.5;
+    for (let i = 0; i < angles; i += 2) {
+      const theta = (i * Math.PI * 2) / angles;
+      const ox = dx + Math.cos(theta) * innerR;
+      const oy = dy + Math.sin(theta) * innerR;
+      shadows.push(`${ox.toFixed(2)}px ${oy.toFixed(2)}px ${(blurPx * 0.5).toFixed(2)}px rgba(${r}, ${g}, ${b}, ${ringAlpha.toFixed(2)})`);
+    }
+  }
+  shadows.push(`${dx.toFixed(2)}px ${dy.toFixed(2)}px ${(blurPx * 0.35).toFixed(2)}px rgba(${r}, ${g}, ${b}, ${alpha.toFixed(2)})`);
+  return shadows.join(', ');
+}
+
 function createInitialDeckSlots(): DeckKeySlot[] {
+  const defaultAppearance = {
+    enableCustomText: false,
+    fontSizeBoost: 4,
+    enableTextShadow: false,
+    textShadowColor: '000000',
+    textShadowSize: 3,
+    textShadowBlend: 4,
+    bgImagePath: '',
+    bgImagePreviewUrl: null as string | null,
+    customBoostText: '',
+    customBoostTextLine2: '',
+    customBoostLine2Pos: 'below' as BoostLine2Position,
+  };
+
   const slots: DeckKeySlot[] = Array.from({ length: 15 }, (_, idx) => ({
     slotIndex: idx,
     actionType: null,
@@ -88,190 +167,76 @@ function createInitialDeckSlots(): DeckKeySlot[] {
     openAfterSaveMode: 'global',
     audioTracksMode: 'all',
     audioTracks: [],
-    enableCustomText: false,
-    fontSizeBoost: 4,
-    bgImagePath: '',
-    bgImagePreviewUrl: null,
-    customBoostText: '',
-    customBoostTextLine2: '',
-    customBoostLine2Pos: 'below',
+    ...defaultAppearance,
   }));
 
   slots[0] = {
+    ...slots[0],
     slotIndex: 0,
     actionType: StreamDeckActionType.FIXED_LENGTH,
     userTitle: 'Clip 30s',
     titleFontSize: 13,
-    titleAlignment: 'middle',
     titleColor: '#F8FAFC',
     fixedDurationInput: '00:30',
-    stepDurationInput: '00:30',
-    minFloorInput: '',
-    resetDurationInput: '00:30',
-    openAfterSaveMode: 'global',
-    audioTracksMode: 'all',
-    audioTracks: [],
-    enableCustomText: false,
-    fontSizeBoost: 4,
-    bgImagePath: '',
-    bgImagePreviewUrl: null,
-    customBoostText: '',
-    customBoostTextLine2: '',
-    customBoostLine2Pos: 'below',
   };
   slots[1] = {
+    ...slots[1],
     slotIndex: 1,
     actionType: StreamDeckActionType.FIXED_LENGTH,
     userTitle: 'VOD 30s',
     titleFontSize: 13,
-    titleAlignment: 'middle',
     titleColor: '#F8FAFC',
     fixedDurationInput: '00:30',
-    stepDurationInput: '00:30',
-    minFloorInput: '',
-    resetDurationInput: '00:30',
     openAfterSaveMode: 'open',
-    audioTracksMode: 'all',
-    audioTracks: [],
-    enableCustomText: false,
-    fontSizeBoost: 4,
-    bgImagePath: '',
-    bgImagePreviewUrl: null,
-    customBoostText: '',
-    customBoostTextLine2: '',
-    customBoostLine2Pos: 'below',
   };
   slots[2] = {
+    ...slots[2],
     slotIndex: 2,
     actionType: StreamDeckActionType.DYNAMIC_LENGTH,
     userTitle: '',
     titleFontSize: 16,
-    titleAlignment: 'middle',
     titleColor: '#FFFFFF',
     fixedDurationInput: '01:00',
-    stepDurationInput: '00:30',
-    minFloorInput: '',
-    resetDurationInput: '00:30',
-    openAfterSaveMode: 'global',
-    audioTracksMode: 'all',
-    audioTracks: [],
-    enableCustomText: false,
-    fontSizeBoost: 4,
-    bgImagePath: '',
-    bgImagePreviewUrl: null,
-    customBoostText: '',
-    customBoostTextLine2: '',
-    customBoostLine2Pos: 'below',
   };
   slots[3] = {
+    ...slots[3],
     slotIndex: 3,
     actionType: StreamDeckActionType.DYNAMIC_INCREASE,
     userTitle: '',
     titleFontSize: 16,
-    titleAlignment: 'middle',
     titleColor: '#E2E8F0',
-    fixedDurationInput: '00:30',
-    stepDurationInput: '00:30',
-    minFloorInput: '',
-    resetDurationInput: '00:30',
-    openAfterSaveMode: 'global',
-    audioTracksMode: 'all',
-    audioTracks: [],
-    enableCustomText: false,
-    fontSizeBoost: 4,
-    bgImagePath: '',
-    bgImagePreviewUrl: null,
-    customBoostText: '',
-    customBoostTextLine2: '',
-    customBoostLine2Pos: 'below',
   };
   slots[4] = {
+    ...slots[4],
     slotIndex: 4,
     actionType: StreamDeckActionType.DYNAMIC_DECREASE,
     userTitle: '',
     titleFontSize: 16,
-    titleAlignment: 'middle',
     titleColor: '#E2E8F0',
-    fixedDurationInput: '00:30',
-    stepDurationInput: '00:30',
-    minFloorInput: '',
-    resetDurationInput: '00:30',
-    openAfterSaveMode: 'global',
-    audioTracksMode: 'all',
-    audioTracks: [],
-    enableCustomText: false,
-    fontSizeBoost: 4,
-    bgImagePath: '',
-    bgImagePreviewUrl: null,
-    customBoostText: '',
-    customBoostTextLine2: '',
-    customBoostLine2Pos: 'below',
   };
   slots[5] = {
+    ...slots[5],
     slotIndex: 5,
     actionType: StreamDeckActionType.RESET_DYNAMIC_LENGTH,
     userTitle: 'Reset 0:30',
     titleFontSize: 12,
-    titleAlignment: 'middle',
     titleColor: '#E2E8F0',
-    fixedDurationInput: '00:30',
-    stepDurationInput: '00:30',
-    minFloorInput: '',
-    resetDurationInput: '00:30',
-    openAfterSaveMode: 'global',
-    audioTracksMode: 'all',
-    audioTracks: [],
-    enableCustomText: false,
-    fontSizeBoost: 4,
-    bgImagePath: '',
-    bgImagePreviewUrl: null,
-    customBoostText: '',
-    customBoostTextLine2: '',
-    customBoostLine2Pos: 'below',
   };
   slots[6] = {
+    ...slots[6],
     slotIndex: 6,
     actionType: StreamDeckActionType.OPEN_OUTPUT_DIRECTORY,
     userTitle: 'Open Output',
     titleFontSize: 12,
-    titleAlignment: 'middle',
     titleColor: '#CBD5E1',
-    fixedDurationInput: '00:30',
-    stepDurationInput: '00:30',
-    minFloorInput: '',
-    resetDurationInput: '00:30',
-    openAfterSaveMode: 'global',
-    audioTracksMode: 'all',
-    audioTracks: [],
-    enableCustomText: false,
-    fontSizeBoost: 4,
-    bgImagePath: '',
-    bgImagePreviewUrl: null,
-    customBoostText: '',
-    customBoostTextLine2: '',
-    customBoostLine2Pos: 'below',
   };
   slots[7] = {
+    ...slots[7],
     slotIndex: 7,
     actionType: StreamDeckActionType.OPEN_CAPTURES_DIRECTORY,
     userTitle: 'Open Captures',
     titleFontSize: 12,
-    titleAlignment: 'middle',
     titleColor: '#CBD5E1',
-    fixedDurationInput: '00:30',
-    stepDurationInput: '00:30',
-    minFloorInput: '',
-    resetDurationInput: '00:30',
-    openAfterSaveMode: 'global',
-    audioTracksMode: 'all',
-    audioTracks: [],
-    enableCustomText: false,
-    fontSizeBoost: 4,
-    bgImagePath: '',
-    bgImagePreviewUrl: null,
-    customBoostText: '',
-    customBoostTextLine2: '',
-    customBoostLine2Pos: 'below',
   };
 
   return slots;
@@ -667,6 +632,10 @@ export function StreamDeckEmulator({
         userTitle: '',
         enableCustomText: false,
         fontSizeBoost: 4,
+        enableTextShadow: false,
+        textShadowColor: '000000',
+        textShadowSize: 3,
+        textShadowBlend: 4,
         customBoostText: '',
         customBoostTextLine2: '',
         customBoostLine2Pos: 'below',
@@ -686,6 +655,10 @@ export function StreamDeckEmulator({
       titleFontSize: isAutoLabel ? 16 : 13,
       enableCustomText: false,
       fontSizeBoost: 4,
+      enableTextShadow: false,
+      textShadowColor: '000000',
+      textShadowSize: 3,
+      textShadowBlend: 4,
       customBoostText: '',
       customBoostTextLine2: '',
       customBoostLine2Pos: 'below',
@@ -929,10 +902,13 @@ export function StreamDeckEmulator({
                           style={{
                             fontSize: `${effectiveFontSize}px`,
                             color: slot.titleColor,
+                            textShadow: buildKeyTextShadowCss(slot),
                           }}
                           className={`font-semibold ${
                             isTwoLine ? 'leading-[1.12]' : 'leading-none'
-                          } text-center whitespace-pre-line break-words max-w-full drop-shadow-sm ${
+                          } text-center whitespace-pre-line break-words max-w-full ${
+                            slot.enableTextShadow ? '' : 'drop-shadow-sm'
+                          } ${
                             isDynamic || customActive ? 'font-mono tabular-nums tracking-tight' : ''
                           }`}
                         >
@@ -1296,6 +1272,11 @@ export function StreamDeckEmulator({
                               +{selectedSlot.fontSizeBoost}pt ({selectedSlot.titleFontSize + selectedSlot.fontSizeBoost}pt)
                             </span>
                           )}
+                          {selectedSlot.enableTextShadow && (
+                            <span className="text-xs font-mono tabular-nums text-slate-400">
+                              #{sanitizeShadowHex6(selectedSlot.textShadowColor)}
+                            </span>
+                          )}
                         </div>
                         <ChevronRight
                           className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-150 ${
@@ -1306,22 +1287,134 @@ export function StreamDeckEmulator({
 
                       {appearanceMenuOpen && (
                         <div className="p-3.5 border-t border-slate-800 space-y-3.5">
-                          <label className="inline-flex items-start gap-2.5 cursor-pointer select-none">
-                            <input
-                              type="checkbox"
-                              checked={selectedSlot.enableCustomText}
-                              onChange={(e) => updateSelectedSlot({ enableCustomText: e.target.checked })}
-                              className="mt-0.5 w-4 h-4 rounded border-slate-600 bg-[#0B0F17] text-blue-600"
-                            />
-                            <div>
-                              <span className="block text-xs font-medium text-slate-200">
-                                Enable Custom Text Size &amp; Text Override
-                              </span>
-                              <span className="block text-xs text-slate-500 mt-0.5">
-                                Off by default. Turning this on immediately boosts text by +{selectedSlot.fontSizeBoost}pt and unlocks 2-line text overrides.
-                              </span>
-                            </div>
-                          </label>
+                          <div className="space-y-2.5">
+                            <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={selectedSlot.enableCustomText}
+                                onChange={(e) => updateSelectedSlot({ enableCustomText: e.target.checked })}
+                                className="mt-0.5 w-4 h-4 rounded border-slate-600 bg-[#0B0F17] text-blue-600"
+                              />
+                              <div>
+                                <span className="block text-xs font-medium text-slate-200">
+                                  Enable Custom Text Size &amp; Text Override
+                                </span>
+                                <span className="block text-xs text-slate-500 mt-0.5">
+                                  Off by default. Turning this on immediately boosts text by +{selectedSlot.fontSizeBoost}pt and unlocks 2-line text overrides.
+                                </span>
+                              </div>
+                            </label>
+
+                            <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={selectedSlot.enableTextShadow}
+                                onChange={(e) => updateSelectedSlot({ enableTextShadow: e.target.checked })}
+                                className="mt-0.5 w-4 h-4 rounded border-slate-600 bg-[#0B0F17] text-blue-600"
+                              />
+                              <div>
+                                <span className="block text-xs font-medium text-slate-200">
+                                  Text Drop Shadow
+                                </span>
+                              </div>
+                            </label>
+
+                            {selectedSlot.enableTextShadow && (
+                              <div className="p-2.5 rounded-md bg-[#111723] border border-slate-800 space-y-2">
+                                <div className="grid grid-cols-12 gap-2 items-end">
+                                  <div className="col-span-6 space-y-1">
+                                    <label
+                                      htmlFor="slot-shadow-color"
+                                      className="flex items-center gap-1.5 text-xs font-medium text-slate-300"
+                                    >
+                                      <span>Color</span>
+                                      <span
+                                        className="inline-block w-3 h-3 rounded-xs border border-slate-600 shrink-0"
+                                        style={{
+                                          backgroundColor: `#${sanitizeShadowHex6(selectedSlot.textShadowColor)}`,
+                                        }}
+                                      />
+                                    </label>
+                                    <div className="flex items-center gap-1">
+                                      <span className="text-xs font-mono text-slate-400 select-none">#</span>
+                                      <input
+                                        id="slot-shadow-color"
+                                        type="text"
+                                        maxLength={7}
+                                        spellCheck={false}
+                                        value={selectedSlot.textShadowColor}
+                                        onChange={(e) =>
+                                          updateSelectedSlot({
+                                            textShadowColor: e.target.value.replace(/^#+/, '').toUpperCase(),
+                                          })
+                                        }
+                                        onBlur={() =>
+                                          updateSelectedSlot({
+                                            textShadowColor: sanitizeShadowHex6(selectedSlot.textShadowColor, '000000'),
+                                          })
+                                        }
+                                        placeholder="000000"
+                                        className="w-full min-w-0 bg-[#0B0F17] border border-slate-700 focus:border-blue-500 rounded-md px-2 py-1.5 text-xs font-mono uppercase text-slate-100 outline-none"
+                                      />
+                                    </div>
+                                  </div>
+
+                                  <div className="col-span-3 space-y-1">
+                                    <label htmlFor="slot-shadow-size" className="block text-xs font-medium text-slate-300">
+                                      Size
+                                    </label>
+                                    <input
+                                      id="slot-shadow-size"
+                                      type="number"
+                                      min={0}
+                                      max={32}
+                                      step={0.5}
+                                      value={selectedSlot.textShadowSize}
+                                      onChange={(e) => {
+                                        const v = Number(e.target.value);
+                                        updateSelectedSlot({
+                                          textShadowSize: Number.isFinite(v) ? Math.min(32, Math.max(0, v)) : 0,
+                                        });
+                                      }}
+                                      className="w-full min-w-0 bg-[#0B0F17] border border-slate-700 focus:border-blue-500 rounded-md px-2 py-1.5 text-xs font-mono tabular-nums text-slate-100 outline-none"
+                                    />
+                                  </div>
+
+                                  <div className="col-span-3 space-y-1">
+                                    <label htmlFor="slot-shadow-blend" className="block text-xs font-medium text-slate-300">
+                                      Blend
+                                    </label>
+                                    <input
+                                      id="slot-shadow-blend"
+                                      type="number"
+                                      min={0}
+                                      max={32}
+                                      step={0.5}
+                                      value={selectedSlot.textShadowBlend}
+                                      onChange={(e) => {
+                                        const v = Number(e.target.value);
+                                        updateSelectedSlot({
+                                          textShadowBlend: Number.isFinite(v) ? Math.min(32, Math.max(0, v)) : 0,
+                                        });
+                                      }}
+                                      className="w-full min-w-0 bg-[#0B0F17] border border-slate-700 focus:border-blue-500 rounded-md px-2 py-1.5 text-xs font-mono tabular-nums text-slate-100 outline-none"
+                                    />
+                                  </div>
+                                </div>
+
+                                {selectedSlot.textShadowColor.length > 0 &&
+                                !/^[0-9a-fA-F]{6}$/.test(selectedSlot.textShadowColor) ? (
+                                  <p className="text-xs text-red-400">
+                                    Enter a 6-character hex RGB value (0-9, A-F), e.g. 000000 or FF0055.
+                                  </p>
+                                ) : (
+                                  <p className="text-xs text-slate-500">
+                                    6-char hex RGB · Size sets spread/offset · Blend feathers the edge (0 = sharp).
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                          </div>
 
                           <div
                             className={`space-y-3 transition-opacity ${

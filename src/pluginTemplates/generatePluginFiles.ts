@@ -1,7 +1,7 @@
 import { GeneratedPluginFile, GlobalPluginSettings } from '../types/plugin';
 
 export const PLUGIN_UUID = 'com.antvenom.replayslice';
-export const PLUGIN_VERSION = '1.0.4.1';
+export const PLUGIN_VERSION = '1.0.4.2';
 export const SD_PLUGIN_FOLDER = `${PLUGIN_UUID}.sdPlugin`;
 
 export function generateManifestJson(): string {
@@ -866,20 +866,42 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '  return { alignedEnd, trimStart: keyframeStart, wasClamped: false, totalAudioStreams };',
     '}',
     '',
+    'function cleanDirPath(raw) {',
+    '  return String(raw || "").trim().replace(/^"+|"+$/g, "");',
+    '}',
+    '',
     'function buildUniqueOutputPath(outputDir, masterFile, requestedSeconds) {',
-    '  const parsed = path.parse(masterFile);',
+    '  // Strictly dump all trimmed output files flatly into Output Directory — never into capture subfolders',
+    '  const flatOutDir = path.resolve(cleanDirPath(outputDir));',
+    '  const baseFileName = path.basename(masterFile);',
+    '  const ext = path.extname(baseFileName);',
+    '  const stem = ext ? baseFileName.slice(0, -ext.length) : baseFileName;',
     '  const tag = formatDurationTag(requestedSeconds);',
-    '  let candidate = path.join(outputDir, `${parsed.name}_${tag}${parsed.ext}`);',
+    '  let candidate = path.join(flatOutDir, `${stem}_${tag}${ext}`);',
     '  let counter = 1;',
-    '  while (fs.existsSync(candidate) && path.resolve(candidate) === path.resolve(masterFile)) {',
-    '    candidate = path.join(outputDir, `${parsed.name}_${tag}_${counter}${parsed.ext}`);',
+    '  while (fs.existsSync(candidate) && path.resolve(candidate).toLowerCase() === path.resolve(masterFile).toLowerCase()) {',
+    '    candidate = path.join(flatOutDir, `${stem}_${tag}_${counter}${ext}`);',
     '    counter++;',
     '  }',
     '  while (fs.existsSync(candidate)) {',
-    '    candidate = path.join(outputDir, `${parsed.name}_${tag}_${counter}${parsed.ext}`);',
+    '    candidate = path.join(flatOutDir, `${stem}_${tag}_${counter}${ext}`);',
     '    counter++;',
     '  }',
     '  return candidate;',
+    '}',
+    '',
+    'async function unlinkMasterWithRetry(filePath, maxAttempts = 6, delayMs = 150) {',
+    '  for (let attempt = 1; attempt <= maxAttempts; attempt++) {',
+    '    try {',
+    '      if (!fs.existsSync(filePath)) return true;',
+    '      fs.unlinkSync(filePath);',
+    '      return true;',
+    '    } catch (err) {',
+    '      if (attempt === maxAttempts) throw err;',
+    '      await sleep(delayMs);',
+    '    }',
+    '  }',
+    '  return false;',
     '}',
     '',
     '// ---------------------------------------------------------------------------',
@@ -1034,6 +1056,37 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '  return Number(btnSettings.fontSizeBoost) > 0;',
     '}',
     '',
+    'function isTextShadowEnabled(btnSettings) {',
+    '  return Boolean(btnSettings && btnSettings.enableTextShadow === true);',
+    '}',
+    '',
+    'function sanitizeHex6(raw, fallback = "000000") {',
+    '  const cleaned = String(raw || "").trim().replace(/^#+/, "");',
+    '  if (/^[0-9a-fA-F]{6}$/.test(cleaned)) {',
+    '    return cleaned.toUpperCase();',
+    '  }',
+    '  return fallback;',
+    '}',
+    '',
+    'function resolveStandardDisplayText(action, meta, btnSettings) {',
+    '  const typedTitle = String(meta.userTitle || "").trim();',
+    '  if (typedTitle.length > 0) return typedTitle;',
+    '  if (action === ACTION_DYNAMIC) {',
+    '    return formatDynamicTitle(globalSettings.dynamicCurrentSeconds ?? 60);',
+    '  }',
+    '  if (action === ACTION_INCREASE) return "+";',
+    '  if (action === ACTION_DECREASE) return "-";',
+    '  if (action === ACTION_FIXED) {',
+    '    const sec = Math.max(1, parseTimecodeToSeconds(btnSettings.fixedDuration || "00:30", 30));',
+    '    return formatDynamicTitle(sec);',
+    '  }',
+    '  if (action === ACTION_RESET) {',
+    '    const sec = Math.max(1, parseTimecodeToSeconds(btnSettings.resetDuration || "00:30", 30));',
+    '    return formatDynamicTitle(sec);',
+    '  }',
+    '  return "";',
+    '}',
+    '',
     'function resolveBoostedDisplayText(action, meta, btnSettings) {',
     '  let primaryLine = "";',
     '  const line1Override = String(btnSettings.customBoostText || "").trim();',
@@ -1070,7 +1123,7 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '  return primaryLine;',
     '}',
     '',
-    'function buildKeySvg({ bgDataUri, text, titleParams, effectiveSize }) {',
+    'function buildKeySvg({ bgDataUri, text, titleParams, effectiveSize, textShadow }) {',
     '  const tp = titleParams || DEFAULT_TITLE_PARAMS;',
     '  const rawFamily = String(tp.fontFamily || "").trim();',
     '  const family = rawFamily || (process.platform === "darwin" ? "Helvetica Neue, Arial, sans-serif" : "Arial, Segoe UI, sans-serif");',
@@ -1105,12 +1158,62 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '    startY = 36 + size * 0.35 - ((linesArr.length - 1) * lineHeight) / 2;',
     '  }',
     '',
+    '  let shadowNodes = "";',
+    '  if (textShadow && textShadow.enabled) {',
+    '    const shadowFill = "#" + sanitizeHex6(textShadow.color, "000000");',
+    '    const rawShSize = Number(textShadow.size);',
+    '    const shSize = Number.isFinite(rawShSize) && rawShSize >= 0 ? Math.min(32, rawShSize) : 3;',
+    '    const rawShBlend = Number(textShadow.blend);',
+    '    const shBlend = Number.isFinite(rawShBlend) && rawShBlend >= 0 ? Math.min(32, rawShBlend) : 4;',
+    '',
+    '    if (shSize > 0 || shBlend > 0) {',
+    '      const dx = shSize > 0 ? shSize * 0.28 : 0;',
+    '      const dy = shSize > 0 ? shSize * 0.38 : 0;',
+    '      const coreW = shSize * 0.85;',
+    '      const featherW = shBlend * 1.35;',
+    '',
+    '      if (shBlend <= 0.05) {',
+    '        const strokeAttrs = coreW > 0.05',
+    '          ? ` stroke="${shadowFill}" stroke-width="${coreW.toFixed(2)}" stroke-linejoin="round" stroke-linecap="round"`',
+    '          : "";',
+    '        const innerTexts = linesArr.map((line, idx) => {',
+    '          const sx = (36 + dx).toFixed(2);',
+    '          const sy = (startY + idx * lineHeight + dy).toFixed(2);',
+    '          return `<text x="${sx}" y="${sy}" text-anchor="middle" font-family="${familyAttr}" font-size="${size.toFixed(1)}" font-weight="${weightAttr}" font-style="${styleAttr}"${underlineAttr} fill="${shadowFill}"${strokeAttrs}>${escapeXml(line)}</text>`;',
+    '        }).join("");',
+    '        shadowNodes = `<g opacity="0.92">${innerTexts}</g>`;',
+    '      } else {',
+    '        const steps = Math.max(4, Math.min(14, Math.ceil(featherW * 2)));',
+    '        const peakAlpha = Math.max(0.58, Math.min(0.92, 0.92 - shBlend * 0.012));',
+    '        let cumAlpha = 0;',
+    '        const groups = [];',
+    '        for (let i = steps; i >= 1; i--) {',
+    '          const u = (i - 1) / steps;',
+    '          const w = coreW + u * featherW;',
+    '          const targetAlpha = peakAlpha * Math.exp(-3.2 * u * u);',
+    '          const layerAlpha = Math.max(0.01, Math.min(1, (targetAlpha - cumAlpha) / Math.max(0.001, 1 - cumAlpha)));',
+    '          cumAlpha = targetAlpha;',
+    '          const strokeAttrs = w > 0.05',
+    '            ? ` stroke="${shadowFill}" stroke-width="${w.toFixed(2)}" stroke-linejoin="round" stroke-linecap="round"`',
+    '            : "";',
+    '          const innerTexts = linesArr.map((line, idx) => {',
+    '            const sx = (36 + dx).toFixed(2);',
+    '            const sy = (startY + idx * lineHeight + dy).toFixed(2);',
+    '            return `<text x="${sx}" y="${sy}" text-anchor="middle" font-family="${familyAttr}" font-size="${size.toFixed(1)}" font-weight="${weightAttr}" font-style="${styleAttr}"${underlineAttr} fill="${shadowFill}"${strokeAttrs}>${escapeXml(line)}</text>`;',
+    '          }).join("");',
+    '          groups.push(`<g opacity="${layerAlpha.toFixed(3)}">${innerTexts}</g>`);',
+    '        }',
+    '        shadowNodes = groups.join("");',
+    '      }',
+    '    }',
+    '  }',
+    '',
     '  const textNodes = linesArr.map((line, idx) => {',
     '    const y = (startY + idx * lineHeight).toFixed(2);',
     '    return `<text x="36" y="${y}" text-anchor="middle" font-family="${familyAttr}" font-size="${size.toFixed(1)}" font-weight="${weightAttr}" font-style="${styleAttr}"${underlineAttr} fill="${fill}">${escapeXml(line)}</text>`;',
     '  }).join("");',
     '',
-    '  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="144" height="144" viewBox="0 0 72 72">${bgLayer}${textNodes}</svg>`;',
+    '  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="144" height="144" viewBox="0 0 72 72">${bgLayer}${shadowNodes}${textNodes}</svg>`;',
     '}',
     '',
     'function renderKeyVisual(context) {',
@@ -1120,13 +1223,14 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '  const titleParams = meta.titleParams || DEFAULT_TITLE_PARAMS;',
     '  const userTitle = String(meta.userTitle || "");',
     '  const customTextActive = isCustomTextEnabled(btnSettings);',
+    '  const textShadowActive = isTextShadowEnabled(btnSettings);',
     '  const rawBoost = Number(btnSettings.fontSizeBoost);',
     '  const boost = customTextActive',
     '    ? (Number.isFinite(rawBoost) && rawBoost >= 0 ? Math.min(56, Math.round(rawBoost)) : 4)',
     '    : 0;',
     '  const bgDataUri = btnSettings.bgImagePath ? loadBackgroundImageDataUri(btnSettings.bgImagePath) : "";',
     '',
-    '  if (!customTextActive && !bgDataUri) {',
+    '  if (!customTextActive && !textShadowActive && !bgDataUri) {',
     '    if (meta.hasCustomImage) {',
     '      sd.sendJSON({ event: "setImage", context, payload: { target: 0 } });',
     '      meta.hasCustomImage = false;',
@@ -1152,8 +1256,8 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '    return;',
     '  }',
     '',
-    '  if (!customTextActive && bgDataUri) {',
-    '    const svg = buildKeySvg({ bgDataUri, text: "", titleParams, effectiveSize: 16 });',
+    '  if (!customTextActive && !textShadowActive && bgDataUri) {',
+    '    const svg = buildKeySvg({ bgDataUri, text: "", titleParams, effectiveSize: 16, textShadow: null });',
     '    const svgUri = "data:image/svg+xml;base64," + Buffer.from(svg, "utf8").toString("base64");',
     '    if (meta.lastSentImage !== svgUri) {',
     '      sd.sendJSON({ event: "setImage", context, payload: { image: svgUri, target: 0 } });',
@@ -1180,7 +1284,7 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '    return;',
     '  }',
     '',
-    '  // Custom Text Size / Override enabled: clear plugin-driven native title so text never doubles up, then render 1- or 2-line centered SVG text + optional PNG background',
+    '  // Custom Text Size / Override or Text Drop Shadow enabled: clear plugin-driven native title so text never doubles up, then render SVG text + optional shadow + optional PNG background',
     '  if (meta.lastSentTitle !== "") {',
     '    sd.sendJSON({ event: "setTitle", context, payload: { title: "", target: 0 } });',
     '    meta.lastSentTitle = "";',
@@ -1188,8 +1292,18 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '',
     '  const baseSize = Number(titleParams.fontSize) > 0 ? Number(titleParams.fontSize) : 16;',
     '  const effectiveSize = Math.min(72, baseSize + boost);',
-    '  const displayText = resolveBoostedDisplayText(meta.action, meta, btnSettings);',
-    '  const svg = buildKeySvg({ bgDataUri, text: displayText, titleParams, effectiveSize });',
+    '  const displayText = customTextActive',
+    '    ? resolveBoostedDisplayText(meta.action, meta, btnSettings)',
+    '    : resolveStandardDisplayText(meta.action, meta, btnSettings);',
+    '  const textShadowCfg = textShadowActive',
+    '    ? {',
+    '        enabled: true,',
+    '        color: btnSettings.textShadowColor,',
+    '        size: btnSettings.textShadowSize,',
+    '        blend: btnSettings.textShadowBlend,',
+    '      }',
+    '    : null;',
+    '  const svg = buildKeySvg({ bgDataUri, text: displayText, titleParams, effectiveSize, textShadow: textShadowCfg });',
     '  const svgUri = "data:image/svg+xml;base64," + Buffer.from(svg, "utf8").toString("base64");',
     '  if (meta.lastSentImage !== svgUri) {',
     '    sd.sendJSON({ event: "setImage", context, payload: { image: svgUri, target: 0 } });',
@@ -1302,7 +1416,7 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '}',
     '',
     'async function openSpecificDirectory(context, rawDir, dirLabel) {',
-    '  const targetDir = (rawDir || "").trim();',
+    '  const targetDir = cleanDirPath(rawDir);',
     '  if (!targetDir || !fs.existsSync(targetDir)) {',
     '    writeLog("ERROR", `${dirLabel} failed: directory not configured or missing`, targetDir);',
     '    sd.sendJSON({ event: "showAlert", context });',
@@ -1371,29 +1485,30 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '    const { ffmpegBin, ffprobeBin, ffplayBin } = await resolveFfmpegSuite(globalSettings.ffmpegPath);',
     '    ffplayHint = ffplayBin;',
     '',
-    '    // 2) Verify directories',
-    '    const mainDir = (globalSettings.mainCapturesDir || "").trim();',
+    '    // 2) Verify directories (output clips always write flatly into resolvedOut — never into capture subfolders)',
+    '    const mainDir = cleanDirPath(globalSettings.mainCapturesDir);',
     '    if (!mainDir || !fs.existsSync(mainDir)) {',
     '      throw new Error(`Main captures directory does not exist: "${mainDir}"`);',
     '    }',
-    '    const outDir = (globalSettings.outputDir || "").trim() || mainDir;',
+    '    const configuredOutDir = cleanDirPath(globalSettings.outputDir);',
+    '    const outDir = configuredOutDir || mainDir;',
     '    if (!fs.existsSync(outDir)) {',
     '      fs.mkdirSync(outDir, { recursive: true });',
     '    }',
     '',
     '    const resolvedMain = path.resolve(mainDir);',
     '    const resolvedOut = path.resolve(outDir);',
-    '    const excludeOut = resolvedOut !== resolvedMain ? resolvedOut : "";',
+    '    const excludeOut = resolvedOut.toLowerCase() !== resolvedMain.toLowerCase() ? resolvedOut : "";',
     '',
     '    // 3) Snapshot pre-existing files & send Master Instant Replay hotkey',
     '    const useRecursive = Boolean(globalSettings.recursiveSearchCaptures);',
-    '    const baseline = scanVideoFiles(mainDir, excludeOut, useRecursive);',
+    '    const baseline = scanVideoFiles(resolvedMain, excludeOut, useRecursive);',
     '    const triggerEpoch = Date.now();',
     '    writeLog("INFO", "Sending master replay hotkey", { hotkey: globalSettings.masterHotkey, requestedSeconds, failTimeoutSec, recursive: useRecursive });',
     '    await injectMasterHotkey(globalSettings.masterHotkey);',
     '',
     '    // 4) Wait for master clip to be written AND fully flushed/unlocked',
-    '    const masterFile = await waitForReadyMasterClip(mainDir, excludeOut, baseline, triggerEpoch, overallDeadline, useRecursive);',
+    '    const masterFile = await waitForReadyMasterClip(resolvedMain, excludeOut, baseline, triggerEpoch, overallDeadline, useRecursive);',
     '    writeLog("INFO", "Master replay clip ready", masterFile);',
     '',
     '    // 5) Probe actual elapsed master duration & keyframe start',
@@ -1405,8 +1520,8 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '      audioSelection',
     '    );',
     '',
-    '    // 6) Trim with FFmpeg (-c copy, zero re-encoding, aligned audio/video streams)',
-    '    outputFileCreated = buildUniqueOutputPath(outDir, masterFile, requestedSeconds);',
+    '    // 6) Trim with FFmpeg (-c copy, zero re-encoding, aligned audio/video streams) directly into Output Directory',
+    '    outputFileCreated = buildUniqueOutputPath(resolvedOut, masterFile, requestedSeconds);',
     '    const remainingMs = Math.max(15000, overallDeadline - Date.now());',
     '',
     '    const audioMapArgs = [];',
@@ -1455,10 +1570,10 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '      throw new Error("Trimmed output file was not written or is 0 bytes.");',
     '    }',
     '',
-    '    // 8) Optionally delete original master capture',
-    '    if (globalSettings.deleteOriginal && path.resolve(outputFileCreated) !== path.resolve(masterFile)) {',
+    '    // 8) Optionally delete original master capture (retries briefly in case NVIDIA/Defender holds a transient handle)',
+    '    if (globalSettings.deleteOriginal && path.resolve(outputFileCreated).toLowerCase() !== path.resolve(masterFile).toLowerCase()) {',
     '      try {',
-    '        fs.unlinkSync(masterFile);',
+    '        await unlinkMasterWithRetry(masterFile);',
     '        writeLog("INFO", "Deleted original master capture", masterFile);',
     '      } catch (delErr) {',
     '        writeLog("WARN", "Could not delete original master capture", delErr.message);',
@@ -1688,7 +1803,7 @@ export function generatePluginNodeBackend(defaults: GlobalPluginSettings): strin
     '      saveGlobalSettings();',
     '      refreshAllDynamicButtons();',
     '    } else if (action === ACTION_OPEN_OUTPUT) {',
-    '      const outTarget = (globalSettings.outputDir && globalSettings.outputDir.trim()) || (globalSettings.mainCapturesDir && globalSettings.mainCapturesDir.trim()) || "";',
+    '      const outTarget = cleanDirPath(globalSettings.outputDir) || cleanDirPath(globalSettings.mainCapturesDir) || "";',
     '      openSpecificDirectory(context, outTarget, "Open Output Directory");',
     '    } else if (action === ACTION_OPEN_CAPTURES) {',
     '      openSpecificDirectory(context, globalSettings.mainCapturesDir, "Open Captures Directory");',
@@ -1880,6 +1995,39 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       margin-top: 10px;
       padding-top: 10px;
     }
+    .shadow-panel {
+      margin: 0 0 10px;
+      padding: 8px;
+      background: #2F2F2F;
+      border: 1px solid #3E3E3E;
+      border-radius: 4px;
+    }
+    .shadow-grid {
+      display: grid;
+      grid-template-columns: 1.35fr 1fr 1fr;
+      gap: 6px;
+      align-items: end;
+    }
+    .swatch-label {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .color-swatch {
+      display: inline-block;
+      width: 11px;
+      height: 11px;
+      border-radius: 2px;
+      border: 1px solid #666666;
+      background: #000000;
+      flex-shrink: 0;
+    }
+    .hex-prefix {
+      color: #9A9A9A;
+      font-family: monospace;
+      font-size: 12px;
+      user-select: none;
+    }
   </style>
 </head>
 <body>
@@ -1947,10 +2095,39 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
     <details id="menu-appearance" class="menu-group">
       <summary>Custom Text Size &amp; Key Background</summary>
       <div class="menu-body">
-        <label class="checkbox-row" style="margin: 0 0 8px;">
+        <label class="checkbox-row" style="margin: 0 0 6px;">
           <input id="enableCustomText" type="checkbox" />
           <span>Enable Custom Text Size &amp; Text Override</span>
         </label>
+
+        <label class="checkbox-row" style="margin: 0 0 8px;">
+          <input id="enableTextShadow" type="checkbox" />
+          <span>Text Drop Shadow</span>
+        </label>
+
+        <div id="textShadowControlsWrap" class="shadow-panel hidden">
+          <div class="shadow-grid">
+            <div class="row" style="margin-bottom: 0;">
+              <label for="textShadowColor" class="swatch-label">
+                <span>Color</span>
+                <span id="textShadowSwatch" class="color-swatch" title="Drop shadow color preview"></span>
+              </label>
+              <div class="inline-group" style="gap: 4px;">
+                <span class="hex-prefix">#</span>
+                <input id="textShadowColor" type="text" maxlength="7" placeholder="000000" value="000000" spellcheck="false" style="font-family: monospace; text-transform: uppercase;" />
+              </div>
+            </div>
+            <div class="row" style="margin-bottom: 0;">
+              <label for="textShadowSize">Size</label>
+              <input id="textShadowSize" type="number" step="0.5" min="0" max="32" placeholder="3" value="3" />
+            </div>
+            <div class="row" style="margin-bottom: 0;">
+              <label for="textShadowBlend">Blend</label>
+              <input id="textShadowBlend" type="number" step="0.5" min="0" max="32" placeholder="4" value="4" />
+            </div>
+          </div>
+          <div id="textShadowHint" class="hint" style="margin-top: 6px;">6-char hex RGB (e.g. 000000) · Size sets spread/offset · Blend feathers edge (0 = sharp)</div>
+        </div>
 
         <div id="customTextControlsWrap" class="controls-disabled">
           <div class="row">
@@ -2137,6 +2314,10 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       audioTracks: [],
       enableCustomText: false,
       fontSizeBoost: 4,
+      enableTextShadow: false,
+      textShadowColor: "000000",
+      textShadowSize: 3,
+      textShadowBlend: 4,
       bgImagePath: "",
       customBoostText: "",
       customBoostTextLine2: "",
@@ -2144,6 +2325,35 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
     };
     let recordingHotkey = false;
     let isApplyingMenuState = false;
+
+    function sanitizeHex6Value(raw, fallback) {
+      const fb = fallback || "000000";
+      const cleaned = String(raw || "").trim().replace(/^#+/, "");
+      if (/^[0-9a-fA-F]{6}$/.test(cleaned)) {
+        return cleaned.toUpperCase();
+      }
+      return fb;
+    }
+
+    function normalizeTextShadowState(saved, fallbackState) {
+      const src = saved || {};
+      const fb = fallbackState || {};
+      const enabled = typeof src.enableTextShadow === "boolean"
+        ? src.enableTextShadow
+        : Boolean(fb.enableTextShadow);
+      const rawColor = src.textShadowColor !== undefined ? src.textShadowColor : fb.textShadowColor;
+      const color = sanitizeHex6Value(rawColor, "000000");
+      const rawSize = Number(src.textShadowSize !== undefined ? src.textShadowSize : (fb.textShadowSize !== undefined ? fb.textShadowSize : 3));
+      const size = Number.isFinite(rawSize) && rawSize >= 0 ? Math.min(32, rawSize) : 3;
+      const rawBlend = Number(src.textShadowBlend !== undefined ? src.textShadowBlend : (fb.textShadowBlend !== undefined ? fb.textShadowBlend : 4));
+      const blend = Number.isFinite(rawBlend) && rawBlend >= 0 ? Math.min(32, rawBlend) : 4;
+      return {
+        enableTextShadow: enabled,
+        textShadowColor: color,
+        textShadowSize: size,
+        textShadowBlend: blend
+      };
+    }
 
     function normalizeCustomTextState(saved, fallbackState) {
       const src = saved || {};
@@ -2191,6 +2401,20 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
         const el = document.getElementById(id);
         if (el) el.disabled = !isEnabled;
       });
+    }
+
+    function syncTextShadowControlsState() {
+      const shadowEnabled = Boolean(document.getElementById("enableTextShadow").checked);
+      const wrap = document.getElementById("textShadowControlsWrap");
+      if (wrap) {
+        wrap.classList.toggle("hidden", !shadowEnabled);
+      }
+      const swatch = document.getElementById("textShadowSwatch");
+      if (swatch) {
+        const rawHex = document.getElementById("textShadowColor").value;
+        const hex = sanitizeHex6Value(rawHex, actionState.textShadowColor || "000000");
+        swatch.style.backgroundColor = "#" + hex;
+      }
     }
 
     function normalizeAudioTracks(rawTracks) {
@@ -2354,6 +2578,18 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
         }
       }
 
+      const shadowHint = document.getElementById("textShadowHint");
+      if (shadowHint) {
+        const rawHex = document.getElementById("textShadowColor").value.trim().replace(/^#+/, "");
+        if (rawHex.length > 0 && !/^[0-9a-fA-F]{6}$/.test(rawHex)) {
+          shadowHint.textContent = "Enter a 6-character hex RGB value (0-9, A-F), e.g. 000000 or FF0055";
+          shadowHint.className = "hint status-err";
+        } else {
+          shadowHint.textContent = "6-char hex RGB (e.g. 000000) · Size sets spread/offset · Blend feathers edge (0 = sharp)";
+          shadowHint.className = "hint";
+        }
+      }
+
       const rawDelay = Number(document.getElementById("repeatDelaySeconds").value);
       const delayVal = Number.isFinite(rawDelay) && rawDelay >= 0.05 ? Math.min(10, rawDelay) : 0.5;
       const rawRate = Number(document.getElementById("repeatRateHz").value);
@@ -2448,6 +2684,15 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       const customEnabled = Boolean(document.getElementById("enableCustomText").checked);
       const rawBoost = Number(document.getElementById("fontSizeBoost").value);
       const safeBoost = Number.isFinite(rawBoost) && rawBoost >= 0 ? Math.min(56, Math.round(rawBoost)) : 4;
+      const shadowEnabled = Boolean(document.getElementById("enableTextShadow").checked);
+      const rawHexInput = document.getElementById("textShadowColor").value.trim().replace(/^#+/, "");
+      const safeShadowColor = /^[0-9a-fA-F]{6}$/.test(rawHexInput)
+        ? rawHexInput.toUpperCase()
+        : sanitizeHex6Value(actionState.textShadowColor, "000000");
+      const rawShadowSize = Number(document.getElementById("textShadowSize").value);
+      const safeShadowSize = Number.isFinite(rawShadowSize) && rawShadowSize >= 0 ? Math.min(32, rawShadowSize) : 3;
+      const rawShadowBlend = Number(document.getElementById("textShadowBlend").value);
+      const safeShadowBlend = Number.isFinite(rawShadowBlend) && rawShadowBlend >= 0 ? Math.min(32, rawShadowBlend) : 4;
       const safeAudioMode = actionState.audioTracksMode === "custom" ? "custom" : "all";
       const safeAudioTracks = safeAudioMode === "custom" ? normalizeAudioTracks(actionState.audioTracks) : [];
       const line2PosVal = document.getElementById("customBoostLine2Pos").value === "above" ? "above" : "below";
@@ -2463,12 +2708,17 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
         audioTracks: safeAudioTracks,
         enableCustomText: customEnabled,
         fontSizeBoost: safeBoost,
+        enableTextShadow: shadowEnabled,
+        textShadowColor: safeShadowColor,
+        textShadowSize: safeShadowSize,
+        textShadowBlend: safeShadowBlend,
         bgImagePath: document.getElementById("bgImagePath").value.trim(),
         customBoostText: document.getElementById("customBoostText").value,
         customBoostTextLine2: document.getElementById("customBoostTextLine2").value,
         customBoostLine2Pos: line2PosVal
       });
       syncCustomTextControlsState();
+      syncTextShadowControlsState();
       renderAudioTrackButtons();
       updateHints();
       if (websocket && websocket.readyState === 1) {
@@ -2511,6 +2761,7 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       document.getElementById("actionSettingsSection").classList.remove("hidden");
       const saved = (actionInfo.payload && actionInfo.payload.settings) || {};
       const customTextInit = normalizeCustomTextState(saved, null);
+      const textShadowInit = normalizeTextShadowState(saved, null);
       const initAudioMode = saved.audioTracksMode === "custom" ? "custom" : "all";
       const initAudioTracks = initAudioMode === "custom"
         ? normalizeAudioTracks(Array.isArray(saved.audioTracks) ? saved.audioTracks : [1])
@@ -2525,6 +2776,10 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
         audioTracks: initAudioTracks,
         enableCustomText: customTextInit.enableCustomText,
         fontSizeBoost: customTextInit.fontSizeBoost,
+        enableTextShadow: textShadowInit.enableTextShadow,
+        textShadowColor: textShadowInit.textShadowColor,
+        textShadowSize: textShadowInit.textShadowSize,
+        textShadowBlend: textShadowInit.textShadowBlend,
         bgImagePath: saved.bgImagePath || "",
         customBoostText: customTextInit.customBoostText,
         customBoostTextLine2: customTextInit.customBoostTextLine2,
@@ -2533,11 +2788,16 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
 
       document.getElementById("enableCustomText").checked = actionState.enableCustomText;
       document.getElementById("fontSizeBoost").value = actionState.fontSizeBoost;
+      document.getElementById("enableTextShadow").checked = actionState.enableTextShadow;
+      document.getElementById("textShadowColor").value = actionState.textShadowColor;
+      document.getElementById("textShadowSize").value = actionState.textShadowSize;
+      document.getElementById("textShadowBlend").value = actionState.textShadowBlend;
       document.getElementById("bgImagePath").value = actionState.bgImagePath;
       document.getElementById("customBoostText").value = actionState.customBoostText;
       document.getElementById("customBoostTextLine2").value = actionState.customBoostTextLine2;
       document.getElementById("customBoostLine2Pos").value = actionState.customBoostLine2Pos;
       syncCustomTextControlsState();
+      syncTextShadowControlsState();
 
       if (isFixed || isDynamic) {
         document.getElementById("openAfterSaveWrap").classList.remove("hidden");
@@ -2585,6 +2845,7 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
         } else if (msg.event === "didReceiveSettings") {
           const incoming = (msg.payload && msg.payload.settings) || {};
           const customTextSync = normalizeCustomTextState(incoming, actionState);
+          const textShadowSync = normalizeTextShadowState(incoming, actionState);
           const incAudioMode = incoming.audioTracksMode !== undefined
             ? (incoming.audioTracksMode === "custom" ? "custom" : "all")
             : actionState.audioTracksMode;
@@ -2601,6 +2862,10 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
             audioTracks: incAudioTracks,
             enableCustomText: customTextSync.enableCustomText,
             fontSizeBoost: customTextSync.fontSizeBoost,
+            enableTextShadow: textShadowSync.enableTextShadow,
+            textShadowColor: textShadowSync.textShadowColor,
+            textShadowSize: textShadowSync.textShadowSize,
+            textShadowBlend: textShadowSync.textShadowBlend,
             bgImagePath: incoming.bgImagePath !== undefined ? incoming.bgImagePath : (actionState.bgImagePath || ""),
             customBoostText: customTextSync.customBoostText,
             customBoostTextLine2: customTextSync.customBoostTextLine2,
@@ -2609,11 +2874,22 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
           document.getElementById("openAfterSaveMode").value = actionState.openAfterSaveMode;
           document.getElementById("enableCustomText").checked = actionState.enableCustomText;
           document.getElementById("fontSizeBoost").value = actionState.fontSizeBoost;
+          document.getElementById("enableTextShadow").checked = actionState.enableTextShadow;
+          if (document.activeElement !== document.getElementById("textShadowColor")) {
+            document.getElementById("textShadowColor").value = actionState.textShadowColor;
+          }
+          if (document.activeElement !== document.getElementById("textShadowSize")) {
+            document.getElementById("textShadowSize").value = actionState.textShadowSize;
+          }
+          if (document.activeElement !== document.getElementById("textShadowBlend")) {
+            document.getElementById("textShadowBlend").value = actionState.textShadowBlend;
+          }
           document.getElementById("bgImagePath").value = actionState.bgImagePath;
           document.getElementById("customBoostText").value = actionState.customBoostText;
           document.getElementById("customBoostTextLine2").value = actionState.customBoostTextLine2;
           document.getElementById("customBoostLine2Pos").value = actionState.customBoostLine2Pos;
           syncCustomTextControlsState();
+          syncTextShadowControlsState();
           renderAudioTrackButtons();
           if (isFixed) document.getElementById("fixedDuration").value = actionState.fixedDuration;
           if (isIncrease || isDecrease) document.getElementById("stepDuration").value = actionState.stepDuration;
@@ -2653,10 +2929,19 @@ export function generatePropertyInspectorHtml(defaults: GlobalPluginSettings): s
       });
     });
 
-    document.querySelectorAll("#fixedDuration, #stepDuration, #minFloor, #resetDuration, #fontSizeBoost, #bgImagePath, #customBoostText, #customBoostTextLine2")
+    document.querySelectorAll("#fixedDuration, #stepDuration, #minFloor, #resetDuration, #fontSizeBoost, #textShadowColor, #textShadowSize, #textShadowBlend, #bgImagePath, #customBoostText, #customBoostTextLine2")
       .forEach((el) => el.addEventListener("input", persistAction));
+    document.getElementById("textShadowColor").addEventListener("change", () => {
+      const el = document.getElementById("textShadowColor");
+      const cleaned = el.value.trim().replace(/^#+/, "");
+      el.value = /^[0-9a-fA-F]{6}$/.test(cleaned)
+        ? cleaned.toUpperCase()
+        : sanitizeHex6Value(actionState.textShadowColor, "000000");
+      persistAction();
+    });
     document.getElementById("openAfterSaveMode").addEventListener("change", persistAction);
     document.getElementById("enableCustomText").addEventListener("change", persistAction);
+    document.getElementById("enableTextShadow").addEventListener("change", persistAction);
     document.getElementById("customBoostLine2Pos").addEventListener("change", persistAction);
 
     document.getElementById("audioTrackAllBtn").addEventListener("click", () => {
@@ -2883,8 +3168,8 @@ Look under **ReplaySlice** in the right-hand Actions list of your Stream Deck so
 
 ## Key Behaviors
 - **Per-Button Audio Track Selection (Tracks 1–6 or All)**: Both *Fixed Length* and *Dynamic Length* buttons default to **All** audio tracks (\`-map 0:a?\`), or let you toggle any custom combination of **Audio Tracks 1–6** (\`-map 0:a:0? ... -map 0:a:5?\`) via 100% pure FFmpeg stream copy (\`-c copy\`, zero re-encoding). Missing tracks are safely skipped without crashing.
-- **Optional Recursive Capture Folder Search**: Inside **Directories & FFmpeg Path**, **Recursively Search Capture Folder?** is **off by default** so pointing at a main or root folder only checks top-level files without crawling massive subfolder trees. Turn it on when using **NVIDIA Replay** (*Essential for NVIDIA Replay*, since NVIDIA saves clips into game-specific subfolders).
-- **Custom Text Size Boost & Key Background**: Every ReplaySlice button includes a collapsible **Custom Text Size & Key Background** menu in *Button Action Settings* with an **Enable Custom Text Size & Text Override** checkbox (off by default, pre-set to \`+4pt\` so turning it on immediately boosts your text). Supports **Line 1** (overwrites the timer / symbol when filled) and **Line 2** (placed **Above** or **Below** the timer / Line 1 and centered together), plus an optional **Key Background Image (\`.png\` / \`.jpg\`)** picker right inside the same menu.
+- **Optional Recursive Capture Folder Search**: Inside **Directories & FFmpeg Path**, **Recursively Search Capture Folder?** is **off by default** so pointing at a main or root folder only checks top-level files without crawling massive subfolder trees. Turn it on when using **NVIDIA Replay** (*Essential for NVIDIA Replay*, since NVIDIA saves clips into game-specific subfolders). All trimmed output files are always saved directly into your configured **Output Directory** (never nested inside capture subfolders).
+- **Custom Text Size Boost, Drop Shadow & Key Background**: Every ReplaySlice button includes a collapsible **Custom Text Size & Key Background** menu in *Button Action Settings* with an **Enable Custom Text Size & Text Override** checkbox (off by default, pre-set to \`+4pt\` so turning it on immediately boosts your text) and a **Text Drop Shadow** checkbox right below it (\`Color\` via 6-character hex RGB, \`Size\`, and \`Blend\`). Supports **Line 1** (overwrites the timer / symbol when filled) and **Line 2** (placed **Above** or **Below** the timer / Line 1 and centered together), plus an optional **Key Background Image (\`.png\` / \`.jpg\`)** picker right inside the same menu.
 - **Hold-to-Repeat on \`+\` / \`-\`**: Holding *Dynamic Increase* or *Dynamic Decrease* waits \`0.5s\` by default and then repeats \`5\` times per second. Both values can be customized in Global Plugin Settings under **Key Delay / Repeat**.
 - **2-Second Capture Debounce**: Rapidly pressing *Fixed Length* or *Dynamic Length* within 2 seconds ignores extra presses. *Dynamic Increase*, *Dynamic Decrease*, and *Reset Dynamic Length* are never debounced.
 - **Zero Re-Encoding & Aligned Audio/Video**: Waits for OBS / ShadowPlay to close its write lock so the file is 100% flushed, inspects audio & video durations via \`ffprobe\`, snaps to the nearest keyframe, and runs \`ffmpeg -c copy -avoid_negative_ts make_zero -shortest\` so audio and video lengths match without cutting off a 1.5s tail.
